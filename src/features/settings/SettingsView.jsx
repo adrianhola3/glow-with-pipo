@@ -134,7 +134,15 @@ export default function SettingsView({
             </div>
             {lastSyncedAt && (
               <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--pipo-cocoa)' }}>
-                Última sincronización verificada: {lastSyncedAt} · Versión App v{appVersion}
+                Última sincronización verificada:{' '}
+                {lastSyncedAt instanceof Date
+                  ? lastSyncedAt.toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    })
+                  : String(lastSyncedAt)}{' '}
+                · Versión App v{appVersion}
               </div>
             )}
           </div>
