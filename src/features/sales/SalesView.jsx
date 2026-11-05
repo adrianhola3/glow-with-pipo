@@ -410,13 +410,18 @@ export default function SalesView({
                 </div>
                 <div className="field">
                   <label>Red Social de contacto *</label>
-                  <select value={cSocial} onChange={(e) => setCSocial(e.target.value)}>
+                  <div className="category-button-grid" style={{ marginTop: 2 }}>
                     {SOCIAL_PLATFORMS.map((sp) => (
-                      <option key={sp.id} value={sp.id}>
+                      <button
+                        key={sp.id}
+                        type="button"
+                        className={`category-pill-btn ${cSocial === sp.id ? 'active' : ''}`}
+                        onClick={() => setCSocial(sp.id)}
+                      >
                         {sp.label}
-                      </option>
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
                 <div className="field">
                   <label>Usuario / Link de red social</label>
@@ -714,10 +719,22 @@ export default function SalesView({
               <div className="form-grid">
                 <div className="field">
                   <label>Estado del pedido</label>
-                  <select value={saleStatus} onChange={(e) => setSaleStatus(e.target.value)}>
-                    <option value="pending_delivery">Pedido reservado (Pendiente de entrega)</option>
-                    <option value="delivered">Entregado en el acto</option>
-                  </select>
+                  <div className="category-button-grid" style={{ marginTop: 2 }}>
+                    <button
+                      type="button"
+                      className={`category-pill-btn ${saleStatus === 'pending_delivery' ? 'active' : ''}`}
+                      onClick={() => setSaleStatus('pending_delivery')}
+                    >
+                      Reservado (Por Entregar)
+                    </button>
+                    <button
+                      type="button"
+                      className={`category-pill-btn ${saleStatus === 'delivered' ? 'active' : ''}`}
+                      onClick={() => setSaleStatus('delivered')}
+                    >
+                      Entregado en el Acto
+                    </button>
+                  </div>
                 </div>
                 <div className="field">
                   <label>Fecha acordada de entrega</label>
@@ -803,13 +820,18 @@ export default function SalesView({
 
                 <div className="field">
                   <label>Medio de pago recibido</label>
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                  <div className="category-button-grid" style={{ marginTop: 2 }}>
                     {PAYMENT_METHODS.map((pm) => (
-                      <option key={pm.id} value={pm.id}>
+                      <button
+                        key={pm.id}
+                        type="button"
+                        className={`category-pill-btn ${paymentMethod === pm.id ? 'active' : ''}`}
+                        onClick={() => setPaymentMethod(pm.id)}
+                      >
                         {pm.label}
-                      </option>
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
 
                 <div className="field">

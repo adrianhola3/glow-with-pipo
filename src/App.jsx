@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Cloud,
   HardDrive,
@@ -79,6 +79,55 @@ export default function App() {
       setToast((prev) => (prev?.text === text ? null : prev));
     }, 3800);
   }, []);
+
+  // Swipe navigation between menu options
+  const touchStartRef = useRef({ x: 0, y: 0, time: 0, ignore: false });
+
+  const handleTouchStart = (e) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const target = e.target;
+    // Ignore touches starting inside interactive controls, modals or horizontally scrollable chips
+    const isInteractive = target.closest(
+      'input, textarea, select, button, .modal-panel, .modal-backdrop, .pipo-select-menu, .category-chips-bar, [data-no-swipe]'
+    );
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+      ignore: !!isInteractive
+    };
+  };
+
+  const handleTouchEnd = (e) => {
+    if (touchStartRef.current.ignore) return;
+    if (e.changedTouches.length !== 1) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - touchStartRef.current.x;
+    const dy = touch.clientY - touchStartRef.current.y;
+    const dt = Date.now() - touchStartRef.current.time;
+
+    // Minimum 55px horizontal swipe, predominantly horizontal (dx > dy * 1.4), within 500ms
+    if (dt < 500 && Math.abs(dx) >= 55 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      const tabOrder = ['dashboard', 'sales', 'inventory', 'restocks', 'settings'];
+      const currentIndex = tabOrder.indexOf(activeTab);
+      if (currentIndex === -1) return;
+
+      if (dx < -55 && currentIndex < tabOrder.length - 1) {
+        // Swiped Left -> go to NEXT tab
+        setActiveTab(tabOrder[currentIndex + 1]);
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(12); } catch {}
+        }
+      } else if (dx > 55 && currentIndex > 0) {
+        // Swiped Right -> go to PREVIOUS tab
+        setActiveTab(tabOrder[currentIndex - 1]);
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(12); } catch {}
+        }
+      }
+    }
+  };
 
   // Restore active Supabase session on startup
   useEffect(() => {
@@ -303,7 +352,11 @@ export default function App() {
   ];
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
 
       {/* Desktop Sidebar */}

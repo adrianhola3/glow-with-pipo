@@ -283,10 +283,22 @@ export default function RestocksView({
 
               <div className="field">
                 <label>Tipo de registro</label>
-                <select value={rType} onChange={(e) => setRType(e.target.value)}>
-                  <option value="purchase">Compra de Reabastecimiento (suma a inversión)</option>
-                  <option value="initial_inventory">Ajuste / Inventario Inicial</option>
-                </select>
+                <div className="category-button-grid" style={{ marginTop: 2 }}>
+                  <button
+                    type="button"
+                    className={`category-pill-btn ${rType === 'purchase' ? 'active' : ''}`}
+                    onClick={() => setRType('purchase')}
+                  >
+                    Compra (Suma a Inversión)
+                  </button>
+                  <button
+                    type="button"
+                    className={`category-pill-btn ${rType === 'initial_inventory' ? 'active' : ''}`}
+                    onClick={() => setRType('initial_inventory')}
+                  >
+                    Ajuste / Inventario Inicial
+                  </button>
+                </div>
               </div>
 
               <div className="field">

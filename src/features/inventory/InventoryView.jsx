@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Edit3, Gift, Layers, PackagePlus, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Edit3, Filter, Gift, Layers, PackagePlus, Plus, Sparkles, Tag, Trash2 } from 'lucide-react';
+import CustomSelect from '../../components/CustomSelect.jsx';
 import {
   computeComboSummary,
   computeMargins,
@@ -341,14 +342,31 @@ export default function InventoryView({
                   </div>
 
                   <div className="field">
-                    <label>Categoría del catálogo</label>
-                    <select value={pCategory} onChange={(e) => setPCategory(e.target.value)}>
+                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>Categoría del catálogo</span>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--pipo-terracotta)', fontWeight: 700 }}>
+                        {pCategory}
+                      </span>
+                    </label>
+                    <CustomSelect
+                      value={pCategory}
+                      onChange={(val) => setPCategory(val)}
+                      options={PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                      icon={Tag}
+                      placeholder="Seleccionar categoría"
+                    />
+                    <div className="category-button-grid" style={{ marginTop: 8 }}>
                       {PRODUCT_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
+                        <button
+                          key={cat}
+                          type="button"
+                          className={`category-pill-btn ${pCategory === cat ? 'active' : ''}`}
+                          onClick={() => setPCategory(cat)}
+                        >
                           {cat}
-                        </option>
+                        </button>
                       ))}
-                    </select>
+                    </div>
                   </div>
                 </div>
 
@@ -641,7 +659,7 @@ export default function InventoryView({
 
           {/* Filters */}
           <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
               <input
                 type="search"
                 placeholder="Buscar por nombre, marca o código..."
@@ -656,25 +674,41 @@ export default function InventoryView({
                   fontSize: 16
                 }}
               />
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                style={{
-                  flex: '1 1 170px',
-                  padding: '9px 13px',
-                  borderRadius: 10,
-                  border: '1.5px solid rgba(199,143,133,0.55)',
-                  fontSize: 16,
-                  background: '#fff'
-                }}
+              <div style={{ flex: '1 1 200px', minWidth: 170 }}>
+                <CustomSelect
+                  value={categoryFilter}
+                  onChange={(val) => setCategoryFilter(val)}
+                  options={[
+                    { value: 'ALL', label: 'Todas las categorías' },
+                    ...PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))
+                  ]}
+                  icon={Filter}
+                  placeholder="Filtrar por categoría"
+                />
+              </div>
+            </div>
+            {/* Quick Filter Pill Chips */}
+            <div className="category-chips-bar">
+              <button
+                type="button"
+                className={`category-chip-item ${categoryFilter === 'ALL' ? 'active' : ''}`}
+                onClick={() => setCategoryFilter('ALL')}
               >
-                <option value="ALL">Todas las categorías</option>
-                {PRODUCT_CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+                Todas ({db.products.length})
+              </button>
+              {PRODUCT_CATEGORIES.map((cat) => {
+                const count = db.products.filter((p) => p.category === cat).length;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`category-chip-item ${categoryFilter === cat ? 'active' : ''}`}
+                    onClick={() => setCategoryFilter(cat)}
+                  >
+                    {cat} {count > 0 ? `(${count})` : ''}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1354,17 +1388,30 @@ export default function InventoryView({
                   />
                 </div>
                 <div className="field">
-                  <label>Categoría</label>
-                  <select
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>Categoría</span>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--pipo-terracotta)', fontWeight: 700 }}>
+                      {editingProduct.category}
+                    </span>
+                  </label>
+                  <CustomSelect
                     value={editingProduct.category}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value })}
-                  >
-                    {PRODUCT_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
+                    onChange={(val) => setEditingProduct({ ...editingProduct, category: val })}
+                    options={PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                    icon={Tag}
+                  />
+                  <div className="category-button-grid" style={{ marginTop: 8 }}>
+                    {PRODUCT_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={`category-pill-btn ${editingProduct.category === cat ? 'active' : ''}`}
+                        onClick={() => setEditingProduct({ ...editingProduct, category: cat })}
+                      >
+                        {cat}
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
                 <div className="field">
                   <label>Precio Unitario (S/)</label>
