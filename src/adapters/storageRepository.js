@@ -18,7 +18,7 @@ export const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_olRnMcbKMUDGHcnC
 
 export const DEFAULT_LOCAL_ACCOUNTS = [
   { id: 'owner-1', email: 'adrian@glowwithpipo.pe', name: 'Adrián', pin: '1234' },
-  { id: 'owner-2', email: 'pipo@glowwithpipo.pe', name: 'Pipo Socia', pin: '1234' }
+  { id: 'owner-2', email: 'pipo@glowwithpipo.pe', name: 'Fabiana', pin: '1234' }
 ];
 
 function hasBrowserStorage() {

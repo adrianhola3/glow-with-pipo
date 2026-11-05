@@ -1,28 +1,33 @@
 import React, { useState } from 'react';
-import { Cloud, HardDrive, Lock, Sparkles } from 'lucide-react';
-import { DEFAULT_LOCAL_ACCOUNTS, signInApp } from '../../adapters/storageRepository.js';
+import { Lock, Sparkles, UserCheck } from 'lucide-react';
+import { signInApp } from '../../adapters/storageRepository.js';
 
-export default function LoginView({ accounts = DEFAULT_LOCAL_ACCOUNTS, onLoggedIn }) {
-  const [mode, setMode] = useState('supabase');
-  const [email, setEmail] = useState('adrian@glowwithpipo.pe');
+export default function LoginView({ onLoggedIn }) {
+  const [selectedUser, setSelectedUser] = useState('adrian'); // 'adrian' | 'fabiana'
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const quickOwners = [
-    { name: 'Adrián', email: 'adrian@glowwithpipo.pe', role: 'Socio Administrador' },
-    { name: 'Pipo Socia', email: 'pipo@glowwithpipo.pe', role: 'Socia Administradora' }
+  const owners = [
+    { id: 'adrian', name: 'Adrián', email: 'adrian@glowwithpipo.pe', role: 'Socio Administrador' },
+    { id: 'fabiana', name: 'Fabiana', email: 'pipo@glowwithpipo.pe', role: 'Socia Administradora' }
   ];
+
+  const activeOwner = owners.find((o) => o.id === selectedUser) || owners[0];
 
   async function handleSubmit(e) {
     e.preventDefault();
     setErrorMsg('');
     setLoading(true);
     try {
-      const session = await signInApp({ email, password, mode });
+      const session = await signInApp({
+        email: activeOwner.email,
+        password,
+        mode: 'supabase'
+      });
       onLoggedIn(session);
     } catch (err) {
-      setErrorMsg(err.message || 'No se pudo iniciar sesión.');
+      setErrorMsg(err.message || 'Contraseña incorrecta.');
     } finally {
       setLoading(false);
     }
@@ -42,122 +47,90 @@ export default function LoginView({ accounts = DEFAULT_LOCAL_ACCOUNTS, onLoggedI
         </div>
 
         <div className="login-body">
-          <div className="tabs-row" style={{ justifyContent: 'center', marginBottom: 14 }}>
-            <button
-              type="button"
-              className={`tab-chip ${mode === 'supabase' ? 'active' : ''}`}
-              onClick={() => {
-                setMode('supabase');
-                if (!email) setEmail('adrian@glowwithpipo.pe');
-                setErrorMsg('');
-              }}
-            >
-              <Cloud size={15} /> Nube en Vivo
-            </button>
-            <button
-              type="button"
-              className={`tab-chip ${mode === 'local' ? 'active' : ''}`}
-              onClick={() => {
-                setMode('local');
-                setEmail(accounts[0]?.email || 'adrian@glowwithpipo.pe');
-                setErrorMsg('');
-              }}
-            >
-              <HardDrive size={15} /> Modo Offline
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-            {mode === 'supabase' ? (
-              <>
-                <div>
-                  <div
-                    style={{
-                      fontSize: '0.78rem',
-                      fontWeight: 800,
-                      color: 'var(--pipo-cocoa)',
-                      marginBottom: 6
-                    }}
-                  >
-                    Selecciona quién ingresa:
-                  </div>
-                  <div className="owner-quick-grid">
-                    {quickOwners.map((owner) => {
-                      const selected = email.trim().toLowerCase() === owner.email;
-                      return (
-                        <button
-                          key={owner.email}
-                          type="button"
-                          className={`owner-quick-btn ${selected ? 'active' : ''}`}
-                          onClick={() => {
-                            setEmail(owner.email);
-                            setErrorMsg('');
-                          }}
-                        >
-                          <strong style={{ fontSize: '0.88rem', color: 'var(--pipo-burgundy)' }}>
-                            {owner.name}
-                          </strong>
-                          <span style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)' }}>
-                            {owner.role}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Correo electrónico</label>
-                  <input
-                    type="email"
-                    required
-                    autoComplete="username"
-                    placeholder="adrian@glowwithpipo.pe"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="field">
-                <label>Perfil local (sin internet)</label>
-                <select value={email} onChange={(e) => setEmail(e.target.value)}>
-                  {accounts.map((acc) => (
-                    <option key={acc.id} value={acc.email}>
-                      {acc.name} ({acc.email})
-                    </option>
-                  ))}
-                </select>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  fontWeight: 800,
+                  color: 'var(--pipo-cocoa)',
+                  marginBottom: 8,
+                  textAlign: 'center'
+                }}
+              >
+                ¿Quién está ingresando hoy?
               </div>
-            )}
+              <div className="owner-quick-grid">
+                {owners.map((owner) => {
+                  const isSelected = selectedUser === owner.id;
+                  return (
+                    <button
+                      key={owner.id}
+                      type="button"
+                      className={`owner-quick-btn ${isSelected ? 'active' : ''}`}
+                      onClick={() => {
+                        setSelectedUser(owner.id);
+                        setErrorMsg('');
+                        setPassword('');
+                      }}
+                    >
+                      <strong style={{ fontSize: '1rem', color: 'var(--pipo-burgundy)' }}>
+                        {owner.name}
+                      </strong>
+                      <span style={{ fontSize: '0.73rem', color: 'var(--pipo-muted)' }}>
+                        {owner.role}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Hidden field for browser password manager compatibility */}
+            <input
+              type="text"
+              name="username"
+              autoComplete="username"
+              value={activeOwner.email}
+              readOnly
+              style={{ display: 'none' }}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
 
             <div className="field">
-              <label>{mode === 'supabase' ? 'Contraseña' : 'PIN local'}</label>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Contraseña</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--pipo-cocoa)', fontWeight: 700 }}>
+                  Ingresando como: <strong style={{ color: 'var(--pipo-burgundy)' }}>{activeOwner.name}</strong>
+                </span>
+              </label>
               <input
                 type="password"
                 required
+                autoFocus
                 autoComplete="current-password"
-                placeholder={mode === 'supabase' ? 'Ingresa tu contraseña' : 'PIN local (1234)'}
+                placeholder="Ingresa tu contraseña personal"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
 
             {errorMsg && (
-              <div className="badge badge-danger" style={{ padding: '8px 12px', whiteSpace: 'normal' }}>
+              <div className="badge badge-danger" style={{ padding: '8px 12px', whiteSpace: 'normal', textAlign: 'center' }}>
                 {errorMsg}
               </div>
             )}
 
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ marginTop: 4 }}>
+            <button type="submit" className="btn btn-primary" disabled={loading} style={{ marginTop: 2 }}>
               <Lock size={16} />
-              {loading ? 'Conectando con Supabase...' : 'Ingresar a Glow with Pipo'}
+              {loading ? 'Verificando con Supabase...' : `Ingresar como ${activeOwner.name}`}
             </button>
           </form>
 
           <div
             style={{
-              marginTop: 16,
+              marginTop: 18,
               paddingTop: 12,
               borderTop: '1px solid rgba(199,143,133,0.28)',
               display: 'flex',

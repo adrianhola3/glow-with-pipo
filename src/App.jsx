@@ -284,48 +284,11 @@ export default function App() {
       <>
         {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
         <LoginView
-          accounts={db.accounts || []}
           onLoggedIn={(sess) => {
             setSession(sess);
             notify(`Hola, ${sess.name}`);
           }}
-          onOpenCloudSetup={() => setShowCloudModalFromLogin(true)}
         />
-        {showCloudModalFromLogin && (
-          <div className="modal-backdrop" onClick={() => setShowCloudModalFromLogin(false)}>
-            <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-              <SettingsView
-                db={db}
-                session={session}
-                realtimeStatus={realtimeStatus}
-                lastSyncedAt={lastSyncedAt}
-                appVersion={typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.2.0'}
-                onSessionUpdated={(sess) => setSession(sess)}
-                onUpdateAccount={(id, data) => setDb(updateLocalOwnerAccount(db, id, data))}
-                onPushToSupabase={async () => {
-                  await syncStateToSupabase(db);
-                  notify('Datos locales sincronizados con Supabase.');
-                }}
-                onPullFromSupabase={async () => {
-                  const cloud = await fetchSupabaseDatabase();
-                  setDb(cloud);
-                  saveLocalDb(cloud);
-                  notify('Datos descargados desde Supabase.');
-                }}
-                onCheckAppUpdate={() => checkForAppUpdate(false)}
-                onImportBackup={(txt) => {
-                  const imported = importLocalDbJson(txt);
-                  setDb(imported);
-                  notify('Respaldo restaurado correctamente.');
-                }}
-                onNotify={(msg) => {
-                  notify(msg);
-                  setShowCloudModalFromLogin(false);
-                }}
-              />
-            </div>
-          </div>
-        )}
       </>
     );
   }
