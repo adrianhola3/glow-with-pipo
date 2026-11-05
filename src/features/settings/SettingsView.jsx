@@ -3,6 +3,8 @@ import {
   CheckCircle2,
   Cloud,
   Download,
+  Eye,
+  EyeOff,
   KeyRound,
   RefreshCw,
   ShieldCheck,
@@ -39,6 +41,7 @@ export default function SettingsView({
   // Cloud profile & password form
   const [profileName, setProfileName] = useState(session?.name || '');
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
   async function handleUpdateCloudProfile(e) {
@@ -249,13 +252,26 @@ export default function SettingsView({
 
               <div className="field">
                 <label>Nueva contraseña (dejar vacío para mantener la actual)</label>
-                <input
-                  type="password"
-                  minLength={6}
-                  placeholder="Mínimo 6 caracteres"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    minLength={6}
+                    placeholder="Mínimo 6 caracteres"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    style={{ paddingRight: 44 }}
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowNewPassword((prev) => !prev)}
+                    title={showNewPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                    tabIndex={-1}
+                    aria-label={showNewPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div>

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Lock, Sparkles, UserCheck } from 'lucide-react';
+import { Eye, EyeOff, Lock, Sparkles, UserCheck } from 'lucide-react';
 import { signInApp } from '../../adapters/storageRepository.js';
 
 export default function LoginView({ onLoggedIn }) {
   const [selectedUser, setSelectedUser] = useState('adrian'); // 'adrian' | 'fabiana'
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -105,15 +106,28 @@ export default function LoginView({ onLoggedIn }) {
                   Ingresando como: <strong style={{ color: 'var(--pipo-burgundy)' }}>{activeOwner.name}</strong>
                 </span>
               </label>
-              <input
-                type="password"
-                required
-                autoFocus
-                autoComplete="current-password"
-                placeholder="Ingresa tu contraseña personal"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <div className="password-input-wrapper">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoFocus
+                  autoComplete="current-password"
+                  placeholder="Ingresa tu contraseña personal"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ paddingRight: 44 }}
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             {errorMsg && (
