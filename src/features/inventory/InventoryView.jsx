@@ -344,7 +344,7 @@ export default function InventoryView({
                   <div className="field">
                     <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span>Categoría del catálogo</span>
-                      <span style={{ fontSize: '0.74rem', color: 'var(--pipo-terracotta)', fontWeight: 700 }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--pipo-burgundy)', fontWeight: 800 }}>
                         {pCategory}
                       </span>
                     </label>
@@ -1390,7 +1390,7 @@ export default function InventoryView({
                 <div className="field">
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <span>Categoría</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--pipo-terracotta)', fontWeight: 700 }}>
+                    <span style={{ fontSize: '0.74rem', color: 'var(--pipo-burgundy)', fontWeight: 800 }}>
                       {editingProduct.category}
                     </span>
                   </label>
