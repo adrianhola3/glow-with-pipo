@@ -1,0 +1,48 @@
+name: Automated Cloud Backup (Supabase -> GitHub)
+
+on:
+  schedule:
+    # Corre todos los días a las 05:00 UTC (00:00 hora Perú)
+    - cron: '0 5 * * *'
+  workflow_dispatch: # Permite dispararlo manualmente desde GitHub con un botón
+
+permissions:
+  contents: write
+
+concurrency:
+  group: 'cloud-backup'
+  cancel-in-progress: true
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+
+      - name: Extraer respaldo de Supabase y rotar snapshots
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_BACKUP_EMAIL: ${{ secrets.SUPABASE_BACKUP_EMAIL }}
+          SUPABASE_BACKUP_PASSWORD: ${{ secrets.SUPABASE_BACKUP_PASSWORD }}
+        run: node scripts/cloud-backup.mjs
+
+      - name: Commit y push del respaldo a GitHub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backups/
+          if git diff --staged --quiet; then
+            echo "No hay cambios nuevos en la base de datos respecto al último backup."
+          else
+            git commit -m "chore(backup): automated daily cloud backup [skip ci]"
+            git push origin main
+          fi
