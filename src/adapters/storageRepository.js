@@ -12,6 +12,8 @@ import { DEFAULT_COMBO_RATIO } from '../domain/constants.js';
 const LOCAL_DB_KEY = 'glow_with_pipo_db_v1';
 const LOCAL_AUTH_KEY = 'glow_with_pipo_session_v1';
 const CLOUD_CONFIG_KEY = 'glow_with_pipo_supabase_cfg_v1';
+export const AUTO_SNAPSHOT_PREFIX = 'glow_pipo_backup_auto_';
+export const MAX_AUTO_SNAPSHOTS = 5;
 
 export const DEFAULT_SUPABASE_URL = 'https://fpahqojoqjrrthlwland.supabase.co';
 export const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_olRnMcbKMUDGHcnCfcB0tg_fQsQob4W';
@@ -139,9 +141,57 @@ export function loadLocalDb() {
 
 export function saveLocalDb(db) {
   if (hasBrowserStorage()) {
-    localStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
+    try {
+      localStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
+      // Auto-snapshot rotativo (últimos 5 estados sanos)
+      const now = Date.now();
+      const rand = Math.random().toString(36).slice(2, 6);
+      const snapshotKey = `${AUTO_SNAPSHOT_PREFIX}${now}_${rand}`;
+      localStorage.setItem(snapshotKey, JSON.stringify(db));
+
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(AUTO_SNAPSHOT_PREFIX)) {
+          keys.push(k);
+        }
+      }
+      keys.sort();
+      while (keys.length > MAX_AUTO_SNAPSHOTS) {
+        const oldest = keys.shift();
+        localStorage.removeItem(oldest);
+      }
+    } catch {
+      // Ignorar errores de cuota de storage de forma segura
+    }
   }
   return db;
+}
+
+export function listAutoSnapshots() {
+  if (!hasBrowserStorage()) return [];
+  const list = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(AUTO_SNAPSHOT_PREFIX)) {
+        const rawTs = k.replace(AUTO_SNAPSHOT_PREFIX, '').split('_')[0];
+        const ts = parseInt(rawTs, 10);
+        list.push({ key: k, timestamp: ts, date: new Date(ts).toLocaleString() });
+      }
+    }
+    list.sort((a, b) => b.timestamp - a.timestamp);
+  } catch {}
+  return list;
+}
+
+export function restoreAutoSnapshot(key) {
+  if (!hasBrowserStorage()) throw new Error('Almacenamiento no disponible');
+  const raw = localStorage.getItem(key);
+  if (!raw) throw new Error('Snapshot no encontrado');
+  const parsed = JSON.parse(raw);
+  saveLocalDb(parsed);
+  return parsed;
 }
 
 export function exportLocalDbJson() {

@@ -811,6 +811,31 @@ select:hover,
   margin-bottom: 20px;
 }
 
+/* Protection Mode / Read-Only Guard Banner */
+.protection-mode-banner {
+  background: #fef3c7;
+  border-bottom: 2px solid #f59e0b;
+  color: #92400e;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  animation: slideDownProtection 0.25s ease-out;
+  position: sticky;
+  top: 0;
+  z-index: 999;
+}
+
+@keyframes slideDownProtection {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 .toast-banner {
   position: fixed;
   top: 16px;
@@ -1091,7 +1116,7 @@ select:hover,
     border-top: 1px dashed rgba(199, 143, 133, 0.35);
   }
 
-  .toast-banner {
+.toast-banner {
     left: 12px;
     right: 12px;
     top: calc(10px + env(safe-area-inset-top, 0px));

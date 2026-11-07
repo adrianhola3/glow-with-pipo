@@ -14,6 +14,7 @@ import {
 import {
   exportLocalDbJson,
   getSupabaseConfig,
+  listAutoSnapshots,
   saveSupabaseConfig,
   updateCloudUserProfile
 } from '../../adapters/storageRepository.js';
@@ -37,6 +38,7 @@ export default function SettingsView({
   const [sbUrl, setSbUrl] = useState(existingCfg?.url || '');
   const [sbKey, setSbKey] = useState(existingCfg?.anonKey || '');
   const [syncing, setSyncing] = useState(false);
+  const autoSnapshots = useMemo(() => listAutoSnapshots(), [db]);
 
   // Cloud profile & password form
   const [profileName, setProfileName] = useState(session?.name || '');
@@ -325,6 +327,12 @@ export default function SettingsView({
               <Upload size={15} /> Restaurar Archivo (.json)
               <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleFileImport} />
             </label>
+          </div>
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed rgba(199, 143, 133, 0.4)' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--pipo-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="sync-dot connected" style={{ width: 8, height: 8 }} />
+              Snapshots automáticos locales activos ({autoSnapshots.length} de {Math.max(autoSnapshots.length, 5)} versiones rotativas preservadas)
+            </span>
           </div>
         </div>
       </div>

@@ -21,7 +21,10 @@ import {
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
-  applyUpdateSaleStatus
+  applyUpdateSaleStatus,
+  listAutoSnapshots,
+  restoreAutoSnapshot,
+  saveLocalDb
 } from '../src/adapters/storageRepository.js';
 
 function emptyState() {
@@ -304,4 +307,33 @@ test('Safe deletion helpers remove entities and enforce relational constraints',
   const custId = createdCust.customer.id;
   db = applyDeleteCustomer(db, custId);
   assert.equal(db.customers.length, 0);
+});
+
+test('Auto-snapshots rotativos retienen como máximo 5 copias históricas y permiten restauración', () => {
+  const store = new Map();
+  global.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    get length() {
+      return store.size;
+    },
+    key: (i) => Array.from(store.keys())[i] || null
+  };
+
+  const initialDb = emptyState();
+  initialDb.products.push({ id: 'p1', name: 'Labial Matte' });
+
+  for (let i = 0; i < 7; i++) {
+    saveLocalDb({ ...initialDb, tick: i });
+  }
+
+  const snapshots = listAutoSnapshots();
+  assert.equal(snapshots.length, 5, 'Debe retener exactamente 5 snapshots rotativos');
+
+  const oldestKey = snapshots[snapshots.length - 1].key;
+  const restored = restoreAutoSnapshot(oldestKey);
+  assert.ok(restored.tick !== undefined, 'El snapshot debe restaurar el estado completo');
+
+  delete global.localStorage;
 });

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Cloud,
   HardDrive,
   LayoutDashboard,
@@ -69,9 +70,26 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState('DISCONNECTED');
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [notifPermission, setNotifPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
   );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const isProtectedMode = useMemo(() => {
+    if (session?.mode !== 'supabase') return false;
+    return !isOnline || realtimeStatus === 'CHANNEL_ERROR' || realtimeStatus === 'CLOSED' || realtimeStatus === 'TIMED_OUT';
+  }, [session, isOnline, realtimeStatus]);
 
   const notify = useCallback((text, isError = false) => {
     setToast({ text, isError });
@@ -264,6 +282,10 @@ export default function App() {
 
   // Unified mutation pipeline: optimistic local update + immediate direct cloud write
   async function commitMutation({ optimisticFn, cloudFn, successMsg }) {
+    if (isProtectedMode) {
+      notify('⚠️ Edición bloqueada: La aplicación está en Modo Protección sin conexión a Supabase.', true);
+      return;
+    }
     let nextDb;
     try {
       nextDb = optimisticFn(db);
@@ -464,6 +486,15 @@ export default function App() {
             <LogOut size={14} /> Salir
           </button>
         </header>
+
+        {isProtectedMode && (
+          <div className="protection-mode-banner">
+            <AlertTriangle size={16} />
+            <span>
+              <strong>Modo Protección Activo:</strong> Sin conexión con Supabase. Edición deshabilitada temporalmente para proteger el inventario.
+            </span>
+          </div>
+        )}
 
         <main className="page-container">
           {activeTab === 'dashboard' && (
