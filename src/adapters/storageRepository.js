@@ -535,7 +535,7 @@ export function applyDeleteCombo(db, comboId) {
 
 export function applyAddCategory(db, categoryName) {
   const next = structuredClone(db);
-  const clean = String(categoryName || '').trim();
+  const clean = String(categoryName || '').replace(/\s+/g, ' ').trim();
   if (!clean) return next;
   const list = Array.isArray(next.categories) && next.categories.length > 0
     ? [...next.categories]
@@ -549,7 +549,7 @@ export function applyAddCategory(db, categoryName) {
 
 export function applyDeleteCategory(db, categoryName) {
   const next = structuredClone(db);
-  const clean = String(categoryName || '').trim();
+  const clean = String(categoryName || '').replace(/\s+/g, ' ').trim();
   const list = Array.isArray(next.categories) && next.categories.length > 0
     ? [...next.categories]
     : [...PRODUCT_CATEGORIES];
@@ -1383,23 +1383,33 @@ export async function cloudDeleteSupplier(supplierId) {
 
 export async function cloudAddCategory(currentDb, categoryName) {
   const client = getSupabaseClient();
-  const clean = String(categoryName || '').trim();
+  const clean = String(categoryName || '').replace(/\s+/g, ' ').trim();
   if (!clean) return fetchSupabaseDatabase();
   const nextOrder = (currentDb?.categories?.length || PRODUCT_CATEGORIES.length) + 1;
   const { error } = await client
     .from('product_categories')
     .upsert({ name: clean, sort_order: nextOrder }, { onConflict: 'name' });
-  if (error) throw new Error(`Error al agregar categoría: ${error.message}`);
-  return fetchSupabaseDatabase();
+  if (error && !String(error.message || '').includes('schema cache')) {
+    throw new Error(`Error al agregar categoría: ${error.message}`);
+  }
+  const fresh = await fetchSupabaseDatabase();
+  if (!fresh.categories.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+    fresh.categories = [...fresh.categories, clean];
+  }
+  return fresh;
 }
 
 export async function cloudDeleteCategory(_currentDb, categoryName) {
   const client = getSupabaseClient();
-  const clean = String(categoryName || '').trim();
+  const clean = String(categoryName || '').replace(/\s+/g, ' ').trim();
   if (!clean) return fetchSupabaseDatabase();
   const { error } = await client.from('product_categories').delete().eq('name', clean);
-  if (error) throw new Error(`Error al quitar categoría: ${error.message}`);
-  return fetchSupabaseDatabase();
+  if (error && !String(error.message || '').includes('schema cache')) {
+    throw new Error(`Error al quitar categoría: ${error.message}`);
+  }
+  const fresh = await fetchSupabaseDatabase();
+  fresh.categories = fresh.categories.filter((c) => c !== clean);
+  return fresh;
 }
 
 // 2. Direct Product + Variants + Initial Inventory Mutations
