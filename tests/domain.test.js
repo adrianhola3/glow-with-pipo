@@ -482,5 +482,47 @@ test('Predefined vs Customizable combos store comboType and calculate available 
   assert.equal(sumCustomizable.availableCount, 4);
 });
 
+test('Sale supports custom final total rounding (customTotalCharged) and updates net profit accurately', () => {
+  let db = emptyState();
+
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Combo Item Test',
+    brand: 'Pipo',
+    category: 'Labios',
+    unitPrice: 31.5,
+    comboRatio: 0.75,
+    comboPrice: 23.63,
+    unitCost: 15.75,
+    initialStock: 5,
+    hasVariants: false
+  });
+
+  // Raw combo price = 23.63, cost = 15.75 (raw profit = 7.88).
+  // User rounds final sale total down to 23.00 -> netProfit must be 23.00 - 15.75 = 7.25
+  db = applyCreateSale(db, {
+    newCustomer: {
+      name: '~valeria_user',
+      whatsapp: '',
+      socialPlatform: 'whatsapp'
+    },
+    customTotalCharged: 23.0,
+    items: [
+      {
+        variantId: db.variants[0].id,
+        quantity: 1,
+        appliedUnitPrice: 23.63,
+        pricingMode: 'combo'
+      }
+    ]
+  });
+
+  const sale = db.sales[0];
+  assert.equal(sale.totalCharged, 23.0);
+  assert.equal(sale.productsRevenue, 23.0);
+  assert.equal(sale.netProfit, 7.25);
+  assert.equal(sale.balanceDue, 23.0);
+});
+
+
 
 

@@ -172,10 +172,11 @@ export function computeSaleTotals({
   suppliesUsed = [],
   shippingCharged = 0,
   shippingCost = null,
+  customTotalCharged = null,
   payments = []
 }) {
   let totalUnits = 0;
-  let productsRevenue = 0;
+  let rawProductsRevenue = 0;
   let productsCost = 0;
 
   const enrichedItems = items.map((item) => {
@@ -188,7 +189,7 @@ export function computeSaleTotals({
     const { marginPercent, isLoss } = computeMargins(unitCost, appliedPrice);
 
     totalUnits += qty;
-    productsRevenue += lineRevenue;
+    rawProductsRevenue += lineRevenue;
     productsCost += lineCost;
 
     return {
@@ -211,7 +212,7 @@ export function computeSaleTotals({
     return { ...sup, quantity: qty, totalCost };
   });
 
-  productsRevenue = roundMoney(productsRevenue);
+  rawProductsRevenue = roundMoney(rawProductsRevenue);
   productsCost = roundMoney(productsCost);
   suppliesCost = roundMoney(suppliesCost);
 
@@ -221,7 +222,21 @@ export function computeSaleTotals({
       ? safeShippingCharged
       : roundMoney(Math.max(0, toNumber(shippingCost, 0)));
 
-  const totalCharged = roundMoney(productsRevenue + safeShippingCharged);
+  const rawTotalCharged = roundMoney(rawProductsRevenue + safeShippingCharged);
+  const hasCustomTotal =
+    customTotalCharged !== null &&
+    customTotalCharged !== undefined &&
+    String(customTotalCharged).trim() !== '';
+
+  const totalCharged = hasCustomTotal
+    ? roundMoney(Math.max(0, toNumber(customTotalCharged, rawTotalCharged)))
+    : rawTotalCharged;
+
+  const productsRevenue = hasCustomTotal
+    ? roundMoney(Math.max(0, totalCharged - safeShippingCharged))
+    : rawProductsRevenue;
+
+  const roundingAdjustment = roundMoney(totalCharged - rawTotalCharged);
   const shippingNet = roundMoney(safeShippingCharged - safeShippingCost);
   const netProfit = roundMoney(productsRevenue - productsCost - suppliesCost + shippingNet);
 
@@ -234,6 +249,9 @@ export function computeSaleTotals({
     items: enrichedItems,
     suppliesUsed: enrichedSupplies,
     totalUnits,
+    rawProductsRevenue,
+    rawTotalCharged,
+    roundingAdjustment,
     productsRevenue,
     productsCost,
     suppliesCost,

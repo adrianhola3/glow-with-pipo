@@ -32,6 +32,36 @@ function cleanWa(phone) {
   return digits.startsWith('51') ? digits : `51${digits}`;
 }
 
+function getQuickRoundOptions(price) {
+  const p = roundMoney(toNumber(price, 0));
+  if (p <= 0) return [];
+  const fl = Math.floor(p);
+  const cl = Math.ceil(p);
+  const hf = roundMoney(fl + 0.5);
+  const map = new Map();
+
+  if (fl > 0 && Math.abs(fl - p) > 0.009) {
+    map.set(fl, { value: fl, label: `↓ S/ ${fl.toFixed(2)}` });
+  }
+  if (hf > 0 && Math.abs(hf - p) > 0.009) {
+    map.set(hf, { value: hf, label: `S/ ${hf.toFixed(2)}` });
+  }
+  if (cl > 0 && Math.abs(cl - p) > 0.009) {
+    map.set(cl, { value: cl, label: `↑ S/ ${cl.toFixed(2)}` });
+  }
+
+  if (map.size === 0) {
+    if (p > 0.5) {
+      const downHalf = roundMoney(p - 0.5);
+      map.set(downHalf, { value: downHalf, label: `-0.50 (S/ ${downHalf.toFixed(2)})` });
+    }
+    const upHalf = roundMoney(p + 0.5);
+    map.set(upHalf, { value: upHalf, label: `+0.50 (S/ ${upHalf.toFixed(2)})` });
+  }
+
+  return Array.from(map.values());
+}
+
 export default function SalesView({
   db,
   currentUser,
@@ -67,6 +97,7 @@ export default function SalesView({
   const [deliveryTime, setDeliveryTime] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
   const [shippingCharged, setShippingCharged] = useState('0');
+  const [customFinalTotal, setCustomFinalTotal] = useState('');
   const [initialPaid, setInitialPaid] = useState('0');
   const [paymentMethod, setPaymentMethod] = useState('yape');
   const [saleNotes, setSaleNotes] = useState('');
@@ -243,9 +274,10 @@ export default function SalesView({
       suppliesUsed: suppliesUsedArray,
       shippingCharged: toNumber(shippingCharged, 0),
       shippingCost: toNumber(shippingCharged, 0),
+      customTotalCharged: customFinalTotal !== '' ? customFinalTotal : null,
       payments: toNumber(initialPaid, 0) > 0 ? [{ amount: toNumber(initialPaid, 0) }] : []
     });
-  }, [cartItems, suppliesUsedArray, shippingCharged, initialPaid]);
+  }, [cartItems, suppliesUsedArray, shippingCharged, customFinalTotal, initialPaid]);
 
   async function handleSubmitSale(e) {
     e.preventDefault();
@@ -269,6 +301,7 @@ export default function SalesView({
       deliveryLocation,
       shippingCharged: toNumber(shippingCharged, 0),
       shippingCost: toNumber(shippingCharged, 0),
+      customTotalCharged: customFinalTotal !== '' ? toNumber(customFinalTotal, liveTotals.totalCharged) : null,
       initialPaymentAmount: toNumber(initialPaid, 0),
       initialPaymentMethod: paymentMethod,
       initialPaymentConcept:
@@ -290,6 +323,7 @@ export default function SalesView({
     setDeliveryTime('');
     setDeliveryLocation('');
     setShippingCharged('0');
+    setCustomFinalTotal('');
     setInitialPaid('0');
     setSaleNotes('');
     setCName('');
@@ -676,38 +710,80 @@ export default function SalesView({
                         </div>
 
                         <div className="field">
-                          <label>Modo de precio rápido</label>
-                          <div style={{ display: 'flex', gap: 5 }}>
-                            <button
-                              type="button"
-                              className={`btn btn-sm ${item.pricingMode === 'unit' ? 'btn-primary' : 'btn-ghost'}`}
-                              onClick={() => {
-                                const copy = [...cartItems];
-                                copy[idx] = {
-                                  ...copy[idx],
-                                  pricingMode: 'unit',
-                                  appliedUnitPrice: copy[idx].catalogUnitPrice
-                                };
-                                setCartItems(copy);
-                              }}
-                            >
-                              Unit. ({formatCurrency(item.catalogUnitPrice)})
-                            </button>
-                            <button
-                              type="button"
-                              className={`btn btn-sm ${item.pricingMode === 'combo' ? 'btn-primary' : 'btn-ghost'}`}
-                              onClick={() => {
-                                const copy = [...cartItems];
-                                copy[idx] = {
-                                  ...copy[idx],
-                                  pricingMode: 'combo',
-                                  appliedUnitPrice: copy[idx].catalogComboPrice
-                                };
-                                setCartItems(copy);
-                              }}
-                            >
-                              Combo ({formatCurrency(item.catalogComboPrice)})
-                            </button>
+                          <label>Modo de precio rápido y redondeo</label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                className={`btn btn-sm ${item.pricingMode === 'unit' ? 'btn-primary' : 'btn-ghost'}`}
+                                onClick={() => {
+                                  const copy = [...cartItems];
+                                  copy[idx] = {
+                                    ...copy[idx],
+                                    pricingMode: 'unit',
+                                    appliedUnitPrice: copy[idx].catalogUnitPrice
+                                  };
+                                  setCartItems(copy);
+                                }}
+                              >
+                                Unit. ({formatCurrency(item.catalogUnitPrice)})
+                              </button>
+                              <button
+                                type="button"
+                                className={`btn btn-sm ${item.pricingMode === 'combo' ? 'btn-primary' : 'btn-ghost'}`}
+                                onClick={() => {
+                                  const copy = [...cartItems];
+                                  copy[idx] = {
+                                    ...copy[idx],
+                                    pricingMode: 'combo',
+                                    appliedUnitPrice: copy[idx].catalogComboPrice
+                                  };
+                                  setCartItems(copy);
+                                }}
+                              >
+                                Combo ({formatCurrency(item.catalogComboPrice)})
+                              </button>
+                            </div>
+                            {(() => {
+                              const baseRef =
+                                item.pricingMode === 'unit'
+                                  ? item.catalogUnitPrice
+                                  : item.catalogComboPrice;
+                              const roundOpts = getQuickRoundOptions(baseRef);
+                              if (roundOpts.length === 0) return null;
+                              const currentApplied = roundMoney(toNumber(item.appliedUnitPrice, 0));
+                              return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '0.7rem', color: 'var(--pipo-muted)', fontWeight: 700 }}>
+                                    Redondear:
+                                  </span>
+                                  {roundOpts.map((ro) => {
+                                    const isActive =
+                                      item.pricingMode === 'custom' &&
+                                      Math.abs(currentApplied - ro.value) < 0.009;
+                                    return (
+                                      <button
+                                        key={ro.value}
+                                        type="button"
+                                        className={`shade-quick-pill ${isActive ? 'active' : ''}`}
+                                        style={{ padding: '2px 7px', fontSize: '0.72rem' }}
+                                        onClick={() => {
+                                          const copy = [...cartItems];
+                                          copy[idx] = {
+                                            ...copy[idx],
+                                            pricingMode: 'custom',
+                                            appliedUnitPrice: ro.value
+                                          };
+                                          setCartItems(copy);
+                                        }}
+                                      >
+                                        {ro.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
 
@@ -984,8 +1060,8 @@ export default function SalesView({
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Productos ({liveTotals.totalUnits} uds):</span>
-                  <strong>{formatCurrency(liveTotals.productsRevenue)}</strong>
+                  <span>Suma de productos ({liveTotals.totalUnits} uds):</span>
+                  <strong>{formatCurrency(liveTotals.rawProductsRevenue)}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--pipo-muted)' }}>
                   <span>Costo mercadería + bolsitas ({formatCurrency(liveTotals.suppliesCost)}):</span>
@@ -997,19 +1073,117 @@ export default function SalesView({
                     <span>{formatCurrency(liveTotals.shippingCharged)}</span>
                   </div>
                 )}
+                {Math.abs(liveTotals.roundingAdjustment) > 0.009 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      color: liveTotals.roundingAdjustment < 0 ? '#9b1c1c' : 'var(--status-ok-fg)',
+                      fontSize: '0.82rem'
+                    }}
+                  >
+                    <span>Ajuste / Redondeo final aplicado:</span>
+                    <strong>
+                      {liveTotals.roundingAdjustment > 0 ? '+' : ''}
+                      {formatCurrency(liveTotals.roundingAdjustment)}
+                    </strong>
+                  </div>
+                )}
+
                 <div
                   style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
                     borderTop: '1px solid rgba(199,143,133,0.35)',
-                    paddingTop: 6,
-                    fontSize: '1rem'
+                    paddingTop: 8,
+                    marginTop: 2,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6
                   }}
                 >
-                  <strong>Total a cobrar al cliente:</strong>
-                  <strong style={{ color: 'var(--pipo-burgundy)' }}>{formatCurrency(liveTotals.totalCharged)}</strong>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                      fontSize: '1rem'
+                    }}
+                  >
+                    <strong>Total a cobrar al cliente (editable):</strong>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 800, color: 'var(--pipo-burgundy)' }}>S/</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={
+                          customFinalTotal !== ''
+                            ? customFinalTotal
+                            : liveTotals.rawTotalCharged
+                        }
+                        onChange={(e) => setCustomFinalTotal(e.target.value)}
+                        style={{
+                          width: 110,
+                          padding: '5px 8px',
+                          fontWeight: 800,
+                          fontSize: '1rem',
+                          color: 'var(--pipo-burgundy)',
+                          textAlign: 'right',
+                          borderRadius: 8,
+                          border: '1.5px solid var(--pipo-rosewood)',
+                          background: 'var(--pipo-ivory)'
+                        }}
+                        title="Puedes escribir o redondear libremente el precio final a cobrar en esta venta"
+                      />
+                    </div>
+                  </div>
+
+                  {liveTotals.rawTotalCharged > 0 && (() => {
+                    const finalRoundOpts = getQuickRoundOptions(liveTotals.rawTotalCharged);
+                    return (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                          gap: 5,
+                          flexWrap: 'wrap'
+                        }}
+                      >
+                        <span style={{ fontSize: '0.73rem', color: 'var(--pipo-muted)', fontWeight: 700 }}>
+                          Redondear total:
+                        </span>
+                        <button
+                          type="button"
+                          className={`shade-quick-pill ${customFinalTotal === '' ? 'active' : ''}`}
+                          style={{ padding: '2px 8px', fontSize: '0.73rem' }}
+                          onClick={() => setCustomFinalTotal('')}
+                        >
+                          Exacto ({formatCurrency(liveTotals.rawTotalCharged)})
+                        </button>
+                        {finalRoundOpts.map((ro) => {
+                          const isActive =
+                            customFinalTotal !== '' &&
+                            Math.abs(toNumber(customFinalTotal, -1) - ro.value) < 0.009;
+                          return (
+                            <button
+                              key={ro.value}
+                              type="button"
+                              className={`shade-quick-pill ${isActive ? 'active' : ''}`}
+                              style={{ padding: '2px 8px', fontSize: '0.73rem' }}
+                              onClick={() => setCustomFinalTotal(String(ro.value))}
+                            >
+                              {ro.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
                   <span>Abonado hoy / Saldo pendiente:</span>
                   <span>
                     <strong>{formatCurrency(liveTotals.amountPaid)}</strong> /{' '}

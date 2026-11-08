@@ -748,6 +748,7 @@ export function applyCreateSale(db, payload) {
     suppliesUsed: suppliesInput,
     shippingCharged: payload.shippingCharged,
     shippingCost: payload.shippingCost,
+    customTotalCharged: payload.customTotalCharged,
     payments
   });
 
@@ -808,6 +809,7 @@ export function applyAddSalePayment(db, saleId, paymentPayload) {
     suppliesUsed: sale.suppliesUsed,
     shippingCharged: sale.shippingCharged,
     shippingCost: sale.shippingCost,
+    customTotalCharged: sale.totalCharged,
     payments: sale.payments
   });
 
@@ -1906,6 +1908,7 @@ export async function cloudCreateSale(currentDb, payload) {
     suppliesUsed: suppliesInput,
     shippingCharged: payload.shippingCharged,
     shippingCost: payload.shippingCost,
+    customTotalCharged: payload.customTotalCharged,
     payments
   });
 
