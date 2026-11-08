@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  computeComboSummary,
   computeDashboardMetrics,
   computeMargins,
   computePackageUnitCost,
@@ -425,5 +426,61 @@ test('Optional colorHex is preserved in single-shade and multi-shade creation, p
   assert.equal(db.sales[0].items[0].shadeNameSnapshot, 'Morado');
   assert.equal(db.sales[0].items[0].shadeColorSnapshot, '#881337');
 });
+
+test('Predefined vs Customizable combos store comboType and calculate available stock appropriately', () => {
+  let db = emptyState();
+
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Lipgloss Funky',
+    brand: 'Funky',
+    category: 'Labios',
+    unitPrice: 8,
+    comboRatio: 0.75,
+    comboPrice: 6,
+    unitCost: 4,
+    hasVariants: true,
+    variants: [
+      { shadeName: 'Tono 01', stock: 1, unitCost: 4 },
+      { shadeName: 'Tono 02', stock: 3, unitCost: 4 }
+    ]
+  });
+
+  const prod = db.products[0];
+  const var1 = db.variants[0];
+
+  // 1. Predefined combo locks to Tono 01 (stock = 1)
+  db = applyCreateOrUpdateCombo(db, {
+    name: 'Combo Cerrado',
+    comboType: 'predefined',
+    items: [{ productId: prod.id, variantId: var1.id, quantity: 1 }]
+  });
+
+  // 2. Customizable combo clears variantId and counts total product stock across all shades (1 + 3 = 4)
+  db = applyCreateOrUpdateCombo(db, {
+    name: 'Combo Libre Elección',
+    comboType: 'customizable',
+    items: [{ productId: prod.id, variantId: var1.id, quantity: 1 }]
+  });
+
+  const predefinedCombo = db.combos.find((c) => c.name === 'Combo Cerrado');
+  const customizableCombo = db.combos.find((c) => c.name === 'Combo Libre Elección');
+
+  assert.equal(predefinedCombo.comboType, 'predefined');
+  assert.equal(predefinedCombo.items[0].variantId, var1.id);
+
+  assert.equal(customizableCombo.comboType, 'customizable');
+  assert.equal(customizableCombo.items[0].variantId, null);
+
+  const productsMap = new Map(db.products.map((p) => [p.id, p]));
+  const variantsMap = new Map(db.variants.map((v) => [v.id, v]));
+  const variantsByProduct = new Map([[prod.id, db.variants]]);
+
+  const sumPredefined = computeComboSummary(predefinedCombo, productsMap, variantsByProduct, variantsMap);
+  const sumCustomizable = computeComboSummary(customizableCombo, productsMap, variantsByProduct, variantsMap);
+
+  assert.equal(sumPredefined.availableCount, 1);
+  assert.equal(sumCustomizable.availableCount, 4);
+});
+
 
 

@@ -112,6 +112,7 @@ export function computeComboSummary(combo, productsMap, variantsByProductMap, va
     };
   }
 
+  const isCustomizable = combo.comboType === 'customizable';
   let regularTotal = 0;
   let comboTotal = 0;
   let estimatedCost = 0;
@@ -126,7 +127,7 @@ export function computeComboSummary(combo, productsMap, variantsByProductMap, va
     }
 
     const productVariants = variantsByProductMap.get(product.id) || [];
-    let targetVariant = item.variantId ? variantsMap.get(item.variantId) : null;
+    let targetVariant = !isCustomizable && item.variantId ? variantsMap.get(item.variantId) : null;
 
     let availableStockForItem = 0;
     if (targetVariant) {

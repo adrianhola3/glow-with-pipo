@@ -93,11 +93,12 @@ create table if not exists public.supplies (
   created_at timestamptz not null default now()
 );
 
--- 5. Predefined Combos (Templates that expand into sale items without duplicating physical stock)
+-- 5. Predefined & Customizable Combos (Templates that expand into sale items without duplicating physical stock)
 create table if not exists public.combos (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
   name text not null,
+  combo_type text not null default 'predefined' check (combo_type in ('predefined', 'customizable')),
   description text default '',
   active boolean not null default true,
   created_at timestamptz not null default now()

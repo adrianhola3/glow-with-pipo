@@ -160,6 +160,7 @@ export default function SalesView({
         variantId: variant.id,
         sourceComboId: combo.id,
         sourceComboName: combo.name,
+        sourceComboType: combo.comboType || 'predefined',
         productNameSnapshot: prod.name,
         shadeNameSnapshot: variant.shadeName,
         shadeColorSnapshot: variant.colorHex || null,
@@ -518,14 +519,14 @@ export default function SalesView({
               {db.combos.length > 0 && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Cargar combo predefinido (expandible)</label>
+                    <label>Cargar combo del catálogo</label>
                     <select
                       value={selectedComboToAdd}
                       onChange={(e) => setSelectedComboToAdd(e.target.value)}
                     >
                       {db.combos.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.code} · {c.name}
+                          {c.code} · {c.name} ({c.comboType === 'customizable' ? 'Personalizable' : 'Predefinido'})
                         </option>
                       ))}
                     </select>
@@ -545,6 +546,8 @@ export default function SalesView({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {liveTotals.items.map((item, idx) => {
                   const v = variantsMap.get(item.variantId);
+                  const isLockedPredefinedCombo =
+                    Boolean(item.sourceComboName) && item.sourceComboType === 'predefined';
                   return (
                     <div
                       key={item.lineId || idx}
@@ -558,7 +561,9 @@ export default function SalesView({
                       {item.sourceComboName && (
                         <div style={{ marginBottom: 6 }}>
                           <span className="badge badge-brand">
-                            Combo: {item.sourceComboName} (puedes cambiar el producto abajo solo por esta venta)
+                            {isLockedPredefinedCombo
+                              ? `Combo Predefinido: ${item.sourceComboName} (Tono fijo del paquete)`
+                              : `Combo Personalizable: ${item.sourceComboName} (Elige el tono del cliente abajo)`}
                           </span>
                         </div>
                       )}
@@ -566,7 +571,11 @@ export default function SalesView({
                       <div className="form-grid" style={{ alignItems: 'end' }}>
                         <div className="field">
                           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span>Producto / Tono (intercambiable X → Y)</span>
+                            <span>
+                              {isLockedPredefinedCombo
+                                ? 'Producto / Tono (fijo por combo predefinido)'
+                                : 'Producto / Tono (intercambiable X → Y)'}
+                            </span>
                             {(v?.colorHex || item.shadeColorSnapshot) && (
                               <span
                                 className="shade-inline-dot"
@@ -577,6 +586,7 @@ export default function SalesView({
                           </label>
                           <select
                             value={item.variantId}
+                            disabled={isLockedPredefinedCombo}
                             onChange={(e) => swapCartLineVariant(idx, e.target.value)}
                           >
                             {availableVariantOptions.map((opt) => (
@@ -589,7 +599,7 @@ export default function SalesView({
                               </option>
                             ))}
                           </select>
-                          {v && (() => {
+                          {!isLockedPredefinedCombo && v && (() => {
                             const siblingVars = db.variants.filter((x) => x.productId === v.productId);
                             if (siblingVars.length <= 1 || !siblingVars.some((x) => x.colorHex)) return null;
                             return (

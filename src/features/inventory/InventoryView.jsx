@@ -67,6 +67,7 @@ export default function InventoryView({
   const [cmbCode, setCmbCode] = useState('');
   const [cmbName, setCmbName] = useState('');
   const [cmbDesc, setCmbDesc] = useState('');
+  const [cmbType, setCmbType] = useState('predefined');
   const [cmbItems, setCmbItems] = useState([]);
 
   const existingBrands = useMemo(() => {
@@ -238,12 +239,17 @@ export default function InventoryView({
       code: cmbCode,
       name: cmbName,
       description: cmbDesc,
-      items: cmbItems
+      comboType: cmbType,
+      items: cmbItems.map((item) => ({
+        ...item,
+        variantId: cmbType === 'customizable' ? null : item.variantId || null
+      }))
     });
     setCmbId(null);
     setCmbCode('');
     setCmbName('');
     setCmbDesc('');
+    setCmbType('predefined');
     setCmbItems([]);
   }
 
@@ -282,7 +288,7 @@ export default function InventoryView({
           className={`tab-chip ${subTab === 'combos' ? 'active' : ''}`}
           onClick={() => setSubTab('combos')}
         >
-          <Sparkles size={15} /> Combos Predefinidos ({db.combos.length})
+          <Sparkles size={15} /> Catálogo de Combos ({db.combos.length})
         </button>
         <button
           type="button"
@@ -881,18 +887,56 @@ export default function InventoryView({
         </>
       )}
 
-      {/* ==================== TAB 2: PREDEFINED COMBOS ==================== */}
+      {/* ==================== TAB 2: COMBOS CATALOG ==================== */}
       {subTab === 'combos' && (
         <div className="grid-2">
           <div className="card card-cream">
             <h3 className="card-title">
-              <Sparkles size={18} /> {cmbId ? 'Editar Combo Predefinido' : 'Crear Combo Predefinido'}
+              <Sparkles size={18} /> {cmbId ? 'Editar Combo del Catálogo' : 'Crear Nuevo Combo'}
             </h3>
             <p style={{ fontSize: '0.84rem', color: 'var(--pipo-muted)', marginTop: 0 }}>
-              Los combos actúan como plantillas: calculan cuántos puedes armar según tu stock actual y al venderlos te permiten cambiar cualquier producto X por Y solo en esa venta.
+              Elige si el combo tiene tonos fijos (Predefinido) o si los tonos quedan a libre elección del cliente al momento de la venta (Personalizable).
             </p>
 
             <form onSubmit={handleComboSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="field">
+                <label>Tipo de combo *</label>
+                <div className="category-button-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
+                  <button
+                    type="button"
+                    className={`category-pill-btn ${cmbType === 'predefined' ? 'active' : ''}`}
+                    style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '8px 12px' }}
+                    onClick={() => {
+                      setCmbType('predefined');
+                      setCmbItems((prev) =>
+                        prev.map((it) => {
+                          if (it.variantId) return it;
+                          const firstVar = (variantsByProduct.get(it.productId) || [])[0];
+                          return { ...it, variantId: firstVar?.id || '' };
+                        })
+                      );
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>1. Combo Predefinido</span>
+                    <span style={{ fontSize: '0.72rem', opacity: 0.85, fontWeight: 400 }}>
+                      Cerrado · Especifica el tono fijo en catálogo
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`category-pill-btn ${cmbType === 'customizable' ? 'active' : ''}`}
+                    style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '8px 12px' }}
+                    onClick={() => setCmbType('customizable')}
+                  >
+                    <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>2. Combo Personalizable</span>
+                    <span style={{ fontSize: '0.72rem', opacity: 0.85, fontWeight: 400 }}>
+                      Abierto · Tonos a libre elección del cliente
+                    </span>
+                  </button>
+                </div>
+              </div>
+
               <div className="form-grid">
                 <div className="field">
                   <label>Código</label>
@@ -950,7 +994,7 @@ export default function InventoryView({
                         ...cmbItems,
                         {
                           productId: firstProd.id,
-                          variantId: firstVar?.id || '',
+                          variantId: cmbType === 'customizable' ? null : firstVar?.id || '',
                           quantity: 1,
                           customComboUnitPrice: ''
                         }
@@ -971,6 +1015,7 @@ export default function InventoryView({
                   {cmbItems.map((item, idx) => {
                     const pVars = variantsByProduct.get(item.productId) || [];
                     const prod = productsMap.get(item.productId);
+                    const totalProdStock = pVars.reduce((acc, v) => acc + Math.max(0, v.stock), 0);
                     return (
                       <div key={idx} className="combo-item-row">
                         <select
@@ -982,7 +1027,7 @@ export default function InventoryView({
                             copy[idx] = {
                               ...copy[idx],
                               productId: nextPid,
-                              variantId: nextVars[0]?.id || ''
+                              variantId: cmbType === 'customizable' ? null : nextVars[0]?.id || ''
                             };
                             setCmbItems(copy);
                           }}
@@ -994,20 +1039,43 @@ export default function InventoryView({
                           ))}
                         </select>
 
-                        <select
-                          value={item.variantId || ''}
-                          onChange={(e) => {
-                            const copy = [...cmbItems];
-                            copy[idx] = { ...copy[idx], variantId: e.target.value };
-                            setCmbItems(copy);
-                          }}
-                        >
-                          {pVars.map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.shadeName} (Stock: {v.stock})
-                            </option>
-                          ))}
-                        </select>
+                        {cmbType === 'customizable' ? (
+                          <div
+                            style={{
+                              padding: '8px 10px',
+                              borderRadius: 10,
+                              border: '1px dashed rgba(199,143,133,0.6)',
+                              background: 'rgba(255,255,255,0.65)',
+                              fontSize: '0.78rem',
+                              color: 'var(--pipo-muted)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 6
+                            }}
+                            title="En combos personalizables el tono no se fija en el catálogo; se elige libremente al registrar la venta."
+                          >
+                            <span>Tono a libre elección</span>
+                            <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '0.74rem' }}>
+                              Stock total: {totalProdStock}
+                            </strong>
+                          </div>
+                        ) : (
+                          <select
+                            value={item.variantId || pVars[0]?.id || ''}
+                            onChange={(e) => {
+                              const copy = [...cmbItems];
+                              copy[idx] = { ...copy[idx], variantId: e.target.value };
+                              setCmbItems(copy);
+                            }}
+                          >
+                            {pVars.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.shadeName} (Stock: {v.stock})
+                              </option>
+                            ))}
+                          </select>
+                        )}
 
                         <input
                           type="number"
@@ -1052,7 +1120,7 @@ export default function InventoryView({
               {cmbItems.length > 0 &&
                 (() => {
                   const preview = computeComboSummary(
-                    { items: cmbItems },
+                    { comboType: cmbType, items: cmbItems },
                     productsMap,
                     variantsByProduct,
                     variantsMap
@@ -1091,6 +1159,7 @@ export default function InventoryView({
                       setCmbCode('');
                       setCmbName('');
                       setCmbDesc('');
+                      setCmbType('predefined');
                       setCmbItems([]);
                     }}
                   >
@@ -1104,10 +1173,11 @@ export default function InventoryView({
           <div className="card">
             <h3 className="card-title">Catálogo de Combos</h3>
             {db.combos.length === 0 ? (
-              <div className="empty-box">Todavía no has definido combos prearmados.</div>
+              <div className="empty-box">Todavía no has definido combos en el catálogo.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {db.combos.map((combo) => {
+                  const isCustomizable = combo.comboType === 'customizable';
                   const sum = computeComboSummary(combo, productsMap, variantsByProduct, variantsMap);
                   return (
                     <div
@@ -1123,17 +1193,36 @@ export default function InventoryView({
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
-                          alignItems: 'center',
+                          alignItems: 'flex-start',
                           flexWrap: 'wrap',
                           gap: 6
                         }}
                       >
                         <div>
-                          <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '1rem' }}>
-                            {combo.code} · {combo.name}
-                          </strong>
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                            <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '1rem' }}>
+                              {combo.code} · {combo.name}
+                            </strong>
+                            <span
+                              className="badge"
+                              style={
+                                isCustomizable
+                                  ? {
+                                      background: 'rgba(199, 143, 133, 0.22)',
+                                      color: 'var(--pipo-burgundy)',
+                                      border: '1px solid rgba(114, 36, 36, 0.2)'
+                                    }
+                                  : {
+                                      background: 'rgba(114, 36, 36, 0.1)',
+                                      color: 'var(--pipo-burgundy)'
+                                    }
+                              }
+                            >
+                              {isCustomizable ? 'Personalizable · Libre elección' : 'Predefinido · Tonos fijos'}
+                            </span>
+                          </div>
                           {combo.description && (
-                            <div style={{ fontSize: '0.8rem', color: 'var(--pipo-muted)' }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--pipo-muted)', marginTop: 2 }}>
                               {combo.description}
                             </div>
                           )}
@@ -1146,13 +1235,13 @@ export default function InventoryView({
                       <div style={{ margin: '8px 0', fontSize: '0.83rem' }}>
                         {(combo.items || []).map((ci, i) => {
                           const p = productsMap.get(ci.productId);
-                          const v = ci.variantId ? variantsMap.get(ci.variantId) : null;
+                          const v = !isCustomizable && ci.variantId ? variantsMap.get(ci.variantId) : null;
                           return (
                             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                               <span>
                                 • {ci.quantity}x {p?.name || 'Producto'}
                               </span>
-                              {v && (v.shadeName !== 'Único' || v.colorHex) && (
+                              {!isCustomizable && v && (v.shadeName !== 'Único' || v.colorHex) && (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   (
                                   {v.colorHex && (
@@ -1196,11 +1285,16 @@ export default function InventoryView({
                               setCmbCode(combo.code);
                               setCmbName(combo.name);
                               setCmbDesc(combo.description || '');
+                              setCmbType(combo.comboType || 'predefined');
                               setCmbItems(
-                                (combo.items || []).map((x) => ({
-                                  ...x,
-                                  customComboUnitPrice: x.customComboUnitPrice ?? ''
-                                }))
+                                (combo.items || []).map((x) => {
+                                  const firstVar = (variantsByProduct.get(x.productId) || [])[0];
+                                  return {
+                                    ...x,
+                                    variantId: x.variantId || firstVar?.id || '',
+                                    customComboUnitPrice: x.customComboUnitPrice ?? ''
+                                  };
+                                })
                               );
                             }}
                           >

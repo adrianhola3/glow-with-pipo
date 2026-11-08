@@ -486,10 +486,11 @@ export function applyDeleteSupply(db, supplyId) {
 export function applyCreateOrUpdateCombo(db, payload) {
   const next = structuredClone(db);
   const code = (payload.code || '').trim() || generateNextCode('CMB', next.combos);
+  const comboType = payload.comboType === 'customizable' ? 'customizable' : 'predefined';
   const cleanItems = (payload.items || []).map((item) => ({
     id: item.id || uid(),
     productId: item.productId,
-    variantId: item.variantId || null,
+    variantId: comboType === 'customizable' ? null : (item.variantId || null),
     quantity: Math.max(1, Math.trunc(toNumber(item.quantity, 1))),
     customComboUnitPrice:
       item.customComboUnitPrice !== undefined && item.customComboUnitPrice !== '' && item.customComboUnitPrice !== null
@@ -504,6 +505,7 @@ export function applyCreateOrUpdateCombo(db, payload) {
         ...next.combos[idx],
         code,
         name: payload.name.trim(),
+        comboType,
         description: (payload.description || '').trim(),
         items: cleanItems
       };
@@ -515,6 +517,7 @@ export function applyCreateOrUpdateCombo(db, payload) {
     id: payload.id || uid(),
     code,
     name: payload.name.trim(),
+    comboType,
     description: (payload.description || '').trim(),
     active: true,
     items: cleanItems,
@@ -1247,6 +1250,7 @@ export async function fetchSupabaseDatabase() {
       id: c.id,
       code: c.code,
       name: c.name,
+      comboType: c.combo_type || 'predefined',
       description: c.description || '',
       active: c.active,
       items: comboItemsByCombo.get(c.id) || [],
@@ -1579,6 +1583,7 @@ export async function cloudSaveCombo(currentDb, payload) {
   const client = getSupabaseClient();
   const code = (payload.code || '').trim() || generateNextCode('CMB', currentDb.combos);
   const comboId = payload.id || uid();
+  const comboType = payload.comboType === 'customizable' ? 'customizable' : 'predefined';
 
   if (payload.id) {
     const { error } = await client
@@ -1586,6 +1591,7 @@ export async function cloudSaveCombo(currentDb, payload) {
       .update({
         code,
         name: payload.name.trim(),
+        combo_type: comboType,
         description: (payload.description || '').trim()
       })
       .eq('id', comboId);
@@ -1596,6 +1602,7 @@ export async function cloudSaveCombo(currentDb, payload) {
       id: comboId,
       code,
       name: payload.name.trim(),
+      combo_type: comboType,
       description: (payload.description || '').trim(),
       active: true
     });
@@ -1606,7 +1613,7 @@ export async function cloudSaveCombo(currentDb, payload) {
     id: uid(),
     combo_id: comboId,
     product_id: item.productId,
-    variant_id: item.variantId || null,
+    variant_id: comboType === 'customizable' ? null : (item.variantId || null),
     quantity: Math.max(1, Math.trunc(toNumber(item.quantity, 1))),
     custom_combo_unit_price:
       item.customComboUnitPrice !== undefined &&
@@ -2219,6 +2226,7 @@ export async function syncStateToSupabase(db) {
         id: c.id,
         code: c.code,
         name: c.name,
+        combo_type: c.comboType === 'customizable' ? 'customizable' : 'predefined',
         description: c.description || '',
         active: c.active !== false
       }))
