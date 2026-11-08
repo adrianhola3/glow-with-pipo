@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { computeDashboardMetrics } from './domain/calculations.js';
 import {
+  applyAddCategory,
   applyAddSalePayment,
   applyCreateOrUpdateCombo,
   applyCreateOrUpdateCustomer,
@@ -19,6 +20,7 @@ import {
   applyCreateOrUpdateSupply,
   applyCreateProductWithInitialStock,
   applyCreateSale,
+  applyDeleteCategory,
   applyDeleteCombo,
   applyDeleteCustomer,
   applyDeleteProduct,
@@ -27,9 +29,11 @@ import {
   applyRecordRestock,
   applyUpdateProduct,
   applyUpdateSaleStatus,
+  cloudAddCategory,
   cloudAddSalePayment,
   cloudCreateProductWithInitialStock,
   cloudCreateSale,
+  cloudDeleteCategory,
   cloudDeleteCombo,
   cloudDeleteCustomer,
   cloudDeleteProduct,
@@ -558,6 +562,20 @@ export default function App() {
                   optimisticFn: (cur) => applyDeleteCombo(cur, comboId),
                   cloudFn: () => cloudDeleteCombo(comboId),
                   successMsg: 'Combo eliminado.'
+                })
+              }
+              onAddCategory={(catName) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyAddCategory(cur, catName),
+                  cloudFn: (cur) => cloudAddCategory(cur, catName),
+                  successMsg: `Categoría "${catName}" añadida al catálogo.`
+                })
+              }
+              onDeleteCategory={(catName) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyDeleteCategory(cur, catName),
+                  cloudFn: (cur) => cloudDeleteCategory(cur, catName),
+                  successMsg: `Categoría "${catName}" quitada del selector.`
                 })
               }
             />

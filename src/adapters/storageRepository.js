@@ -7,7 +7,7 @@ import {
   roundUnitCost,
   toNumber
 } from '../domain/calculations.js';
-import { DEFAULT_COMBO_RATIO } from '../domain/constants.js';
+import { DEFAULT_COMBO_RATIO, PRODUCT_CATEGORIES } from '../domain/constants.js';
 
 const LOCAL_DB_KEY = 'glow_with_pipo_db_v1';
 const LOCAL_AUTH_KEY = 'glow_with_pipo_session_v1';
@@ -30,6 +30,7 @@ function hasBrowserStorage() {
 function createEmptyDatabase() {
   return {
     accounts: DEFAULT_LOCAL_ACCOUNTS,
+    categories: [...PRODUCT_CATEGORIES],
     suppliers: [],
     products: [],
     variants: [],
@@ -529,6 +530,34 @@ export function applyCreateOrUpdateCombo(db, payload) {
 export function applyDeleteCombo(db, comboId) {
   const next = structuredClone(db);
   next.combos = next.combos.filter((c) => c.id !== comboId);
+  return next;
+}
+
+export function applyAddCategory(db, categoryName) {
+  const next = structuredClone(db);
+  const clean = String(categoryName || '').trim();
+  if (!clean) return next;
+  const list = Array.isArray(next.categories) && next.categories.length > 0
+    ? [...next.categories]
+    : [...PRODUCT_CATEGORIES];
+  if (!list.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+    list.push(clean);
+  }
+  next.categories = list;
+  return next;
+}
+
+export function applyDeleteCategory(db, categoryName) {
+  const next = structuredClone(db);
+  const clean = String(categoryName || '').trim();
+  const list = Array.isArray(next.categories) && next.categories.length > 0
+    ? [...next.categories]
+    : [...PRODUCT_CATEGORIES];
+  const filtered = list.filter((c) => c !== clean);
+  if (filtered.length === 0) {
+    throw new Error('Debes conservar al menos una categoría activa en el catálogo.');
+  }
+  next.categories = filtered;
   return next;
 }
 
@@ -1070,6 +1099,7 @@ export async function fetchSupabaseDatabase() {
   if (!client) throw new Error('Supabase no está configurado.');
 
   const [
+    categoriesRes,
     suppliersRes,
     productsRes,
     variantsRes,
@@ -1084,6 +1114,11 @@ export async function fetchSupabaseDatabase() {
     saleSuppliesRes,
     salePaymentsRes
   ] = await Promise.all([
+    client
+      .from('product_categories')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true }),
     client.from('suppliers').select('*').order('created_at', { ascending: true }),
     client.from('products').select('*').order('created_at', { ascending: true }),
     client.from('product_variants').select('*').order('created_at', { ascending: true }),
@@ -1203,9 +1238,14 @@ export async function fetchSupabaseDatabase() {
   }
 
   const localAccounts = loadLocalDb().accounts || DEFAULT_LOCAL_ACCOUNTS;
+  const cloudCategories =
+    !categoriesRes.error && Array.isArray(categoriesRes.data) && categoriesRes.data.length > 0
+      ? categoriesRes.data.map((c) => c.name).filter(Boolean)
+      : [...PRODUCT_CATEGORIES];
 
   return {
     accounts: localAccounts,
+    categories: cloudCategories,
     suppliers: (suppliersRes.data || []).map((s) => ({
       id: s.id,
       code: s.code,
@@ -1338,6 +1378,27 @@ export async function cloudDeleteSupplier(supplierId) {
   const client = getSupabaseClient();
   const { error } = await client.from('suppliers').delete().eq('id', supplierId);
   if (error) throw new Error(`Error al eliminar proveedor: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudAddCategory(currentDb, categoryName) {
+  const client = getSupabaseClient();
+  const clean = String(categoryName || '').trim();
+  if (!clean) return fetchSupabaseDatabase();
+  const nextOrder = (currentDb?.categories?.length || PRODUCT_CATEGORIES.length) + 1;
+  const { error } = await client
+    .from('product_categories')
+    .upsert({ name: clean, sort_order: nextOrder }, { onConflict: 'name' });
+  if (error) throw new Error(`Error al agregar categoría: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudDeleteCategory(_currentDb, categoryName) {
+  const client = getSupabaseClient();
+  const clean = String(categoryName || '').trim();
+  if (!clean) return fetchSupabaseDatabase();
+  const { error } = await client.from('product_categories').delete().eq('name', clean);
+  if (error) throw new Error(`Error al quitar categoría: ${error.message}`);
   return fetchSupabaseDatabase();
 }
 

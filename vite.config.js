@@ -4,7 +4,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const BUILD_ID = new Date().toISOString();
-const APP_VERSION = '1.2.7';
+const APP_VERSION = '1.2.8';
 
 function pipoVersionManifestPlugin() {
   const payload = JSON.stringify(

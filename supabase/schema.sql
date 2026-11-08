@@ -42,6 +42,13 @@ values
 on conflict (email) do update
 set display_name = excluded.display_name;
 
+-- 0. Customizable Product Categories
+create table if not exists public.product_categories (
+  name text primary key,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
 -- 1. Suppliers
 create table if not exists public.suppliers (
   id uuid primary key default gen_random_uuid(),

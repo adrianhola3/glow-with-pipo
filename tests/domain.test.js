@@ -9,6 +9,7 @@ import {
   computeWeightedAverageCost
 } from '../src/domain/calculations.js';
 import {
+  applyAddCategory,
   applyAddSalePayment,
   applyCreateOrUpdateCombo,
   applyCreateOrUpdateCustomer,
@@ -16,6 +17,7 @@ import {
   applyCreateOrUpdateSupply,
   applyCreateProductWithInitialStock,
   applyCreateSale,
+  applyDeleteCategory,
   applyDeleteCombo,
   applyDeleteCustomer,
   applyDeleteProduct,
@@ -522,6 +524,17 @@ test('Sale supports custom final total rounding (customTotalCharged) and updates
   assert.equal(sale.netProfit, 7.25);
   assert.equal(sale.balanceDue, 23.0);
 });
+
+test('Custom product categories can be freely added and removed', () => {
+  let db = emptyState();
+
+  db = applyAddCategory(db, 'Skincare');
+  assert.ok(db.categories.includes('Skincare'));
+
+  db = applyDeleteCategory(db, 'Rubor');
+  assert.ok(!db.categories.includes('Rubor'));
+});
+
 
 
 

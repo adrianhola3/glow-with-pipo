@@ -24,13 +24,17 @@ export default function InventoryView({
   onSaveSupply,
   onDeleteSupply,
   onSaveCombo,
-  onDeleteCombo
+  onDeleteCombo,
+  onAddCategory,
+  onDeleteCategory
 }) {
   const [subTab, setSubTab] = useState('products'); // products | combos | supplies
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [showProductForm, setShowProductForm] = useState(db.products.length === 0);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [isManagingCategories, setIsManagingCategories] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   // New Product Form State
   const [pCode, setPCode] = useState('');
@@ -69,6 +73,14 @@ export default function InventoryView({
   const [cmbDesc, setCmbDesc] = useState('');
   const [cmbType, setCmbType] = useState('predefined');
   const [cmbItems, setCmbItems] = useState([]);
+
+  const availableCategories = useMemo(() => {
+    const base =
+      Array.isArray(db.categories) && db.categories.length > 0
+        ? db.categories
+        : PRODUCT_CATEGORIES;
+    return base;
+  }, [db.categories]);
 
   const existingBrands = useMemo(() => {
     const set = new Set();
@@ -357,31 +369,146 @@ export default function InventoryView({
                   </div>
 
                   <div className="field">
-                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       <span>Categoría del catálogo</span>
-                      <span style={{ fontSize: '0.74rem', color: 'var(--pipo-burgundy)', fontWeight: 800 }}>
-                        {pCategory}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--pipo-burgundy)', fontWeight: 800 }}>
+                          {pCategory}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ padding: '2px 8px', fontSize: '0.72rem' }}
+                          onClick={() => setIsManagingCategories((prev) => !prev)}
+                        >
+                          {isManagingCategories ? 'Listo' : '+ Añadir / Quitar'}
+                        </button>
+                      </div>
                     </label>
                     <CustomSelect
                       value={pCategory}
                       onChange={(val) => setPCategory(val)}
-                      options={PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                      options={availableCategories.map((c) => ({ value: c, label: c }))}
                       icon={Tag}
                       placeholder="Seleccionar categoría"
                     />
                     <div className="category-button-grid" style={{ marginTop: 8 }}>
-                      {PRODUCT_CATEGORIES.map((cat) => (
-                        <button
+                      {availableCategories.map((cat) => (
+                        <div
                           key={cat}
-                          type="button"
-                          className={`category-pill-btn ${pCategory === cat ? 'active' : ''}`}
-                          onClick={() => setPCategory(cat)}
+                          style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
                         >
-                          {cat}
-                        </button>
+                          <button
+                            type="button"
+                            className={`category-pill-btn ${pCategory === cat ? 'active' : ''}`}
+                            style={{
+                              width: '100%',
+                              paddingRight: isManagingCategories && availableCategories.length > 1 ? 26 : undefined
+                            }}
+                            onClick={() => setPCategory(cat)}
+                          >
+                            {cat}
+                          </button>
+                          {isManagingCategories && availableCategories.length > 1 && onDeleteCategory && (
+                            <button
+                              type="button"
+                              title={`Quitar categoría "${cat}"`}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await onDeleteCategory(cat);
+                                if (pCategory === cat) {
+                                  const remaining = availableCategories.filter((c) => c !== cat);
+                                  if (remaining[0]) setPCategory(remaining[0]);
+                                }
+                              }}
+                              style={{
+                                position: 'absolute',
+                                right: 5,
+                                width: 18,
+                                height: 18,
+                                borderRadius: '50%',
+                                border: 'none',
+                                background: pCategory === cat ? 'rgba(255,255,255,0.28)' : 'rgba(155,28,28,0.14)',
+                                color: pCategory === cat ? '#fff' : '#9b1c1c',
+                                fontSize: '0.75rem',
+                                fontWeight: 800,
+                                lineHeight: 1,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: 0
+                              }}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
                       ))}
+                      {!isManagingCategories && (
+                        <button
+                          type="button"
+                          className="category-pill-btn"
+                          style={{
+                            borderStyle: 'dashed',
+                            color: 'var(--pipo-burgundy)',
+                            opacity: 0.9
+                          }}
+                          onClick={() => setIsManagingCategories(true)}
+                          title="Añadir o quitar categorías del catálogo"
+                        >
+                          <Plus size={13} /> Personalizar
+                        </button>
+                      )}
                     </div>
+
+                    {isManagingCategories && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          padding: 9,
+                          borderRadius: 10,
+                          background: 'var(--pipo-ivory)',
+                          border: '1px dashed rgba(199,143,133,0.6)',
+                          display: 'flex',
+                          gap: 6,
+                          alignItems: 'center',
+                          flexWrap: 'wrap'
+                        }}
+                      >
+                        <input
+                          type="text"
+                          placeholder="Nueva categoría (ej. Skincare, Uñas...)"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const clean = newCategoryName.trim();
+                              if (!clean || !onAddCategory) return;
+                              await onAddCategory(clean);
+                              setPCategory(clean);
+                              setNewCategoryName('');
+                            }
+                          }}
+                          style={{ flex: '1 1 150px', minWidth: 0, padding: '6px 9px', fontSize: '0.82rem' }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={!newCategoryName.trim()}
+                          onClick={async () => {
+                            const clean = newCategoryName.trim();
+                            if (!clean || !onAddCategory) return;
+                            await onAddCategory(clean);
+                            setPCategory(clean);
+                            setNewCategoryName('');
+                          }}
+                        >
+                          <Plus size={13} /> Añadir
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -729,7 +856,7 @@ export default function InventoryView({
                   onChange={(val) => setCategoryFilter(val)}
                   options={[
                     { value: 'ALL', label: 'Todas las categorías' },
-                    ...PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))
+                    ...availableCategories.map((c) => ({ value: c, label: c }))
                   ]}
                   icon={Filter}
                   placeholder="Filtrar por categoría"
@@ -745,7 +872,7 @@ export default function InventoryView({
               >
                 Todas ({db.products.length})
               </button>
-              {PRODUCT_CATEGORIES.map((cat) => {
+              {availableCategories.map((cat) => {
                 const count = db.products.filter((p) => p.category === cat).length;
                 return (
                   <button
@@ -1554,11 +1681,11 @@ export default function InventoryView({
                   <CustomSelect
                     value={editingProduct.category}
                     onChange={(val) => setEditingProduct({ ...editingProduct, category: val })}
-                    options={PRODUCT_CATEGORIES.map((c) => ({ value: c, label: c }))}
+                    options={availableCategories.map((c) => ({ value: c, label: c }))}
                     icon={Tag}
                   />
                   <div className="category-button-grid" style={{ marginTop: 8 }}>
-                    {PRODUCT_CATEGORIES.map((cat) => (
+                    {availableCategories.map((cat) => (
                       <button
                         key={cat}
                         type="button"
