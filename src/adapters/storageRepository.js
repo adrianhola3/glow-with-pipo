@@ -274,7 +274,9 @@ export function applyCreateProductWithInitialStock(db, payload) {
       : roundMoney(unitPrice * comboRatio);
 
   const productId = payload.id || uid();
-  const hasVariants = Boolean(payload.hasVariants);
+  const singleShade = (payload.singleShadeName || '').trim();
+  const hasVariants =
+    Boolean(payload.hasVariants) || (singleShade !== '' && singleShade.toLowerCase() !== 'único');
 
   const newProduct = {
     id: productId,
@@ -293,11 +295,11 @@ export function applyCreateProductWithInitialStock(db, payload) {
   next.products.push(newProduct);
 
   const rawVariants =
-    hasVariants && Array.isArray(payload.variants) && payload.variants.length > 0
+    payload.hasVariants && Array.isArray(payload.variants) && payload.variants.length > 0
       ? payload.variants
       : [
           {
-            shadeName: 'Único',
+            shadeName: singleShade || 'Único',
             stock: Math.max(0, Math.trunc(toNumber(payload.initialStock, 0))),
             unitCost: roundUnitCost(payload.unitCost)
           }
@@ -1323,7 +1325,9 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
       : roundMoney(unitPrice * comboRatio);
 
   const productId = uid();
-  const hasVariants = Boolean(payload.hasVariants);
+  const singleShade = (payload.singleShadeName || '').trim();
+  const hasVariants =
+    Boolean(payload.hasVariants) || (singleShade !== '' && singleShade.toLowerCase() !== 'único');
 
   const { error: prodErr } = await client.from('products').insert({
     id: productId,
@@ -1340,11 +1344,11 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
   if (prodErr) throw new Error(`Error al crear producto: ${prodErr.message}`);
 
   const rawVariants =
-    hasVariants && Array.isArray(payload.variants) && payload.variants.length > 0
+    payload.hasVariants && Array.isArray(payload.variants) && payload.variants.length > 0
       ? payload.variants
       : [
           {
-            shadeName: 'Único',
+            shadeName: singleShade || 'Único',
             stock: Math.max(0, Math.trunc(toNumber(payload.initialStock, 0))),
             unitCost: roundUnitCost(payload.unitCost)
           }

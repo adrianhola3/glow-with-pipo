@@ -43,6 +43,7 @@ export default function InventoryView({
   const [comboRatioPct, setComboRatioPct] = useState('75');
   const [comboPriceInput, setComboPriceInput] = useState('');
   const [initialStock, setInitialStock] = useState('12');
+  const [singleShadeName, setSingleShadeName] = useState('');
   const [hasVariants, setHasVariants] = useState(false);
   const [shadeCountHelper, setShadeCountHelper] = useState('6');
   const [variantsDraft, setVariantsDraft] = useState([
@@ -168,6 +169,7 @@ export default function InventoryView({
       comboRatio: ratio,
       comboPrice: cleanComboPrice,
       hasVariants,
+      singleShadeName: singleShadeName.trim(),
       initialStock: toNumber(initialStock, 0),
       entryType: 'initial_inventory',
       variants: hasVariants
@@ -183,6 +185,7 @@ export default function InventoryView({
 
     setPCode('');
     setPName('');
+    setSingleShadeName('');
     setPkgTotalCost('');
     setUnitCostInput('');
     setUnitPriceInput('');
@@ -510,22 +513,40 @@ export default function InventoryView({
                     </label>
 
                     {!hasVariants && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: '0.84rem', fontWeight: 800 }}>Stock físico actual:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={initialStock}
-                          onChange={(e) => setInitialStock(e.target.value)}
-                          style={{
-                            width: 96,
-                            padding: '7px 10px',
-                            borderRadius: 8,
-                            border: '1.5px solid var(--pipo-rosewood)',
-                            fontSize: 16
-                          }}
-                        />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: '0.84rem', fontWeight: 800 }}>Tono / Variedad:</span>
+                          <input
+                            type="text"
+                            placeholder="Ej. Avena (opcional)"
+                            value={singleShadeName}
+                            onChange={(e) => setSingleShadeName(e.target.value)}
+                            style={{
+                              width: 155,
+                              padding: '7px 10px',
+                              borderRadius: 8,
+                              border: '1.5px solid var(--pipo-rosewood)',
+                              fontSize: 14
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: '0.84rem', fontWeight: 800 }}>Stock físico actual:</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={initialStock}
+                            onChange={(e) => setInitialStock(e.target.value)}
+                            style={{
+                              width: 80,
+                              padding: '7px 10px',
+                              borderRadius: 8,
+                              border: '1.5px solid var(--pipo-rosewood)',
+                              fontSize: 16
+                            }}
+                          />
+                        </div>
                       </div>
                     )}
                   </div>

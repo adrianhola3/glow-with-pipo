@@ -337,3 +337,26 @@ test('Auto-snapshots rotativos retienen como máximo 5 copias históricas y perm
 
   delete global.localStorage;
 });
+
+test('Single item product with custom shade name (e.g. Mascarilla Avena) creates variant with shade name and hasVariants=true', () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Mascarilla Facial',
+    brand: 'Bioaqua',
+    category: 'Rostro',
+    unitCost: 0.75,
+    unitPrice: 1.5,
+    comboRatio: 0.75,
+    hasVariants: false,
+    singleShadeName: 'Avena',
+    initialStock: 1,
+    entryType: 'initial_inventory'
+  });
+
+  assert.equal(db.products.length, 1);
+  assert.equal(db.products[0].hasVariants, true);
+  assert.equal(db.variants.length, 1);
+  assert.equal(db.variants[0].shadeName, 'Avena');
+  assert.equal(db.variants[0].stock, 1);
+});
+
