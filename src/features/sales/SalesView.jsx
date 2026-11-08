@@ -28,7 +28,7 @@ import { PAYMENT_METHODS, SALE_STATUSES, SOCIAL_PLATFORMS } from '../../domain/c
 
 function cleanWa(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (!digits) return '';
+  if (digits.length < 7) return '';
   return digits.startsWith('51') ? digits : `51${digits}`;
 }
 
@@ -308,7 +308,7 @@ export default function SalesView({
 
   async function handleSaveDirectoryCustomer(e) {
     e.preventDefault();
-    if (!dirName.trim() || !dirWa.trim()) return;
+    if (!dirName.trim()) return;
     await onSaveCustomer({
       id: dirId,
       code: dirCode,
@@ -368,7 +368,7 @@ export default function SalesView({
           <div className="card card-cream">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
               <h3 className="card-title" style={{ margin: 0 }}>
-                1. Cliente del Pedido (WhatsApp y Red Social obligatorios)
+                1. Cliente del Pedido (Nombre / Usuario y Red Social)
               </h3>
               {db.customers.length > 0 && (
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -402,7 +402,9 @@ export default function SalesView({
                     <option value="">Elegir cliente...</option>
                     {db.customers.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.code} · {c.name} — WA: {c.whatsapp} ({c.socialPlatform})
+                        {c.code} · {c.name}
+                        {c.whatsapp ? ` — WA: ${c.whatsapp}` : ''}
+                        {c.socialHandle ? ` · ${c.socialHandle}` : ''} ({c.socialPlatform})
                       </option>
                     ))}
                   </select>
@@ -415,21 +417,20 @@ export default function SalesView({
             ) : (
               <div className="form-grid">
                 <div className="field">
-                  <label>Nombre / Alias del cliente *</label>
+                  <label>Nombre o Usuario del cliente *</label>
                   <input
                     type="text"
                     required
-                    placeholder="Ej. Valeria Gómez"
+                    placeholder="Ej. Valeria Gómez o ~valeriag"
                     value={cName}
                     onChange={(e) => setCName(e.target.value)}
                   />
                 </div>
                 <div className="field">
-                  <label>Número de WhatsApp *</label>
+                  <label>Número de WhatsApp (opcional)</label>
                   <input
-                    type="tel"
-                    required
-                    placeholder="Ej. 987654321"
+                    type="text"
+                    placeholder="Ej. 987654321 (o vacío si solo ves su usuario)"
                     value={cWa}
                     onChange={(e) => setCWa(e.target.value)}
                   />
@@ -450,7 +451,7 @@ export default function SalesView({
                   </div>
                 </div>
                 <div className="field">
-                  <label>Usuario / Link de red social</label>
+                  <label>Usuario / Link de red social (opc.)</label>
                   <input
                     type="text"
                     placeholder="Ej. @valeriag"
@@ -1262,11 +1263,11 @@ export default function SalesView({
                   />
                 </div>
                 <div className="field">
-                  <label>Nombre / Alias *</label>
+                  <label>Nombre o Usuario del cliente *</label>
                   <input
                     type="text"
                     required
-                    placeholder="Ej. Camila Rojas"
+                    placeholder="Ej. Camila Rojas o ~camila_glow"
                     value={dirName}
                     onChange={(e) => setDirName(e.target.value)}
                   />
@@ -1275,11 +1276,10 @@ export default function SalesView({
 
               <div className="form-grid">
                 <div className="field">
-                  <label>Número de WhatsApp *</label>
+                  <label>Número de WhatsApp (opcional)</label>
                   <input
-                    type="tel"
-                    required
-                    placeholder="Ej. 987654321"
+                    type="text"
+                    placeholder="Ej. 987654321 (o vacío si solo ves su usuario)"
                     value={dirWa}
                     onChange={(e) => setDirWa(e.target.value)}
                   />
@@ -1295,7 +1295,7 @@ export default function SalesView({
                   </select>
                 </div>
                 <div className="field">
-                  <label>Usuario o Link</label>
+                  <label>Usuario o Link (opc.)</label>
                   <input
                     type="text"
                     placeholder="Ej. @camilarojas"
@@ -1375,8 +1375,12 @@ export default function SalesView({
                               <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" style={{ color: 'var(--pipo-burgundy)', fontWeight: 700 }}>
                                 {c.whatsapp}
                               </a>
-                            ) : (
+                            ) : c.whatsapp ? (
                               c.whatsapp
+                            ) : (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--pipo-muted)' }}>
+                                Solo usuario ({c.socialHandle || c.name})
+                              </span>
                             )}
                             <div style={{ fontSize: '0.76rem', color: 'var(--pipo-muted)', textTransform: 'capitalize' }}>
                               {c.socialPlatform} {c.socialHandle ? `· ${c.socialHandle}` : ''}

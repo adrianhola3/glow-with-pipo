@@ -620,6 +620,7 @@ export function applyRecordRestock(db, payload) {
 export function applyCreateOrUpdateCustomer(db, payload) {
   const next = structuredClone(db);
   const code = (payload.code || '').trim() || generateNextCode('CLI', next.customers);
+  const cleanWhatsapp = (payload.whatsapp || '').trim();
 
   if (payload.id) {
     const idx = next.customers.findIndex((c) => c.id === payload.id);
@@ -628,7 +629,7 @@ export function applyCreateOrUpdateCustomer(db, payload) {
         ...next.customers[idx],
         code,
         name: payload.name.trim(),
-        whatsapp: payload.whatsapp.trim(),
+        whatsapp: cleanWhatsapp,
         socialPlatform: payload.socialPlatform || 'instagram',
         socialHandle: (payload.socialHandle || '').trim(),
         notes: (payload.notes || '').trim()
@@ -641,7 +642,7 @@ export function applyCreateOrUpdateCustomer(db, payload) {
     id: payload.id || uid(),
     code,
     name: payload.name.trim(),
-    whatsapp: payload.whatsapp.trim(),
+    whatsapp: cleanWhatsapp,
     socialPlatform: payload.socialPlatform || 'instagram',
     socialHandle: (payload.socialHandle || '').trim(),
     notes: (payload.notes || '').trim(),
@@ -1769,7 +1770,7 @@ export async function cloudSaveCustomer(currentDb, payload) {
   const row = {
     code,
     name: payload.name.trim(),
-    whatsapp: payload.whatsapp.trim(),
+    whatsapp: (payload.whatsapp || '').trim(),
     social_platform: payload.socialPlatform || 'instagram',
     social_handle: (payload.socialHandle || '').trim(),
     notes: (payload.notes || '').trim()
@@ -1810,7 +1811,7 @@ export async function cloudCreateSale(currentDb, payload) {
       id: customerId,
       code: custCode,
       name: payload.newCustomer.name.trim(),
-      whatsapp: payload.newCustomer.whatsapp.trim(),
+      whatsapp: (payload.newCustomer.whatsapp || '').trim(),
       social_platform: payload.newCustomer.socialPlatform || 'instagram',
       social_handle: (payload.newCustomer.socialHandle || '').trim(),
       notes: (payload.newCustomer.notes || '').trim()

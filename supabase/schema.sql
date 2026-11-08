@@ -144,7 +144,7 @@ create table if not exists public.customers (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
   name text not null,
-  whatsapp text not null,
+  whatsapp text not null default '',
   social_platform text not null default 'instagram' check (social_platform in ('instagram', 'tiktok', 'facebook', 'whatsapp', 'other')),
   social_handle text default '',
   notes text default '',

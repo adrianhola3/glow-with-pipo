@@ -15,7 +15,7 @@ import { formatCurrency, getStockLevelBadge } from '../../domain/calculations.js
 
 function cleanPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (!digits) return '';
+  if (digits.length < 7) return '';
   return digits.startsWith('51') ? digits : `51${digits}`;
 }
 
