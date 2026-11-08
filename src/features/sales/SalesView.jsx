@@ -91,7 +91,14 @@ export default function SalesView({
   const customersMap = useMemo(() => new Map(db.customers.map((c) => [c.id, c])), [db.customers]);
 
   const availableVariantOptions = useMemo(() => {
-    return db.variants.map((v) => {
+    const sorted = [...db.variants].sort((a, b) => {
+      const pa = productsMap.get(a.productId)?.name || '';
+      const pb = productsMap.get(b.productId)?.name || '';
+      const cmpProd = pa.localeCompare(pb, 'es', { numeric: true });
+      if (cmpProd !== 0) return cmpProd;
+      return (a.shadeName || '').localeCompare(b.shadeName || '', 'es', { numeric: true });
+    });
+    return sorted.map((v) => {
       const p = productsMap.get(v.productId);
       return {
         id: v.id,
@@ -143,10 +150,17 @@ export default function SalesView({
     for (const ci of combo.items || []) {
       const prod = productsMap.get(ci.productId);
       if (!prod) continue;
-      let variant = ci.variantId ? variantsMap.get(ci.variantId) : null;
+      const prodVariantsSorted = db.variants
+        .filter((v) => v.productId === prod.id)
+        .sort((a, b) => (a.shadeName || '').localeCompare(b.shadeName || '', 'es', { numeric: true }));
+      let variant =
+        combo.comboType !== 'customizable' && ci.variantId
+          ? variantsMap.get(ci.variantId)
+          : null;
       if (!variant) {
-        variant = db.variants.find((v) => v.productId === prod.id && v.stock > 0) ||
-                  db.variants.find((v) => v.productId === prod.id);
+        variant =
+          prodVariantsSorted.find((v) => v.stock > 0) ||
+          prodVariantsSorted[0];
       }
       if (!variant) continue;
 
@@ -176,7 +190,7 @@ export default function SalesView({
     setCartItems([...cartItems, ...expanded]);
   }
 
-  // Replace Product X with Product Y inside the sale (preserving combo mode if it came from a combo!)
+  // Change the selected shade/variant of the product on this cart line
   function swapCartLineVariant(lineIdx, nextVariantId) {
     const v = variantsMap.get(nextVariantId);
     if (!v) return;
@@ -185,7 +199,12 @@ export default function SalesView({
 
     const copy = [...cartItems];
     const prev = copy[lineIdx];
-    const nextPrice = prev.pricingMode === 'combo' ? p.comboPrice : p.unitPrice;
+    const sameProduct = prev.productNameSnapshot === p.name;
+    const nextPrice = sameProduct
+      ? prev.appliedUnitPrice
+      : prev.pricingMode === 'combo'
+        ? p.comboPrice
+        : p.unitPrice;
 
     copy[lineIdx] = {
       ...prev,
@@ -569,63 +588,76 @@ export default function SalesView({
                       )}
 
                       <div className="form-grid" style={{ alignItems: 'end' }}>
-                        <div className="field">
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span>
-                              {isLockedPredefinedCombo
-                                ? 'Producto / Tono (fijo por combo predefinido)'
-                                : 'Producto / Tono (intercambiable X → Y)'}
-                            </span>
-                            {(v?.colorHex || item.shadeColorSnapshot) && (
-                              <span
-                                className="shade-inline-dot"
-                                style={{ backgroundColor: v?.colorHex || item.shadeColorSnapshot }}
-                                title={v?.colorHex || item.shadeColorSnapshot}
-                              />
-                            )}
-                          </label>
-                          <select
-                            value={item.variantId}
-                            disabled={isLockedPredefinedCombo}
-                            onChange={(e) => swapCartLineVariant(idx, e.target.value)}
-                          >
-                            {availableVariantOptions.map((opt) => (
-                              <option
-                                key={opt.id}
-                                value={opt.id}
-                                disabled={opt.variant.stock <= 0 && opt.id !== item.variantId}
+                        {(() => {
+                          const productVariants = v
+                            ? db.variants
+                                .filter((x) => x.productId === v.productId)
+                                .sort((a, b) =>
+                                  (a.shadeName || '').localeCompare(b.shadeName || '', 'es', {
+                                    numeric: true
+                                  })
+                                )
+                            : [];
+                          const prodName = item.productNameSnapshot || 'Producto';
+
+                          return (
+                            <div className="field">
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>
+                                  {isLockedPredefinedCombo
+                                    ? `${prodName} · Tono fijo del combo`
+                                    : `${prodName} · Elegir tono`}
+                                </span>
+                                {(v?.colorHex || item.shadeColorSnapshot) && (
+                                  <span
+                                    className="shade-inline-dot"
+                                    style={{ backgroundColor: v?.colorHex || item.shadeColorSnapshot }}
+                                    title={v?.colorHex || item.shadeColorSnapshot}
+                                  />
+                                )}
+                              </label>
+                              <select
+                                value={item.variantId}
+                                disabled={isLockedPredefinedCombo || productVariants.length <= 1}
+                                onChange={(e) => swapCartLineVariant(idx, e.target.value)}
                               >
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                          {!isLockedPredefinedCombo && v && (() => {
-                            const siblingVars = db.variants.filter((x) => x.productId === v.productId);
-                            if (siblingVars.length <= 1 || !siblingVars.some((x) => x.colorHex)) return null;
-                            return (
-                              <div className="shade-quick-pills-row" style={{ marginTop: 4 }}>
-                                {siblingVars.map((sv) => (
-                                  <button
+                                {productVariants.map((sv) => (
+                                  <option
                                     key={sv.id}
-                                    type="button"
+                                    value={sv.id}
                                     disabled={sv.stock <= 0 && sv.id !== item.variantId}
-                                    className={`shade-quick-pill ${sv.id === item.variantId ? 'active' : ''}`}
-                                    style={{ padding: '3px 8px', fontSize: '0.72rem' }}
-                                    onClick={() => swapCartLineVariant(idx, sv.id)}
                                   >
-                                    {sv.colorHex && (
-                                      <span
-                                        className="shade-inline-dot"
-                                        style={{ backgroundColor: sv.colorHex }}
-                                      />
-                                    )}
-                                    <span>{sv.shadeName}</span>
-                                  </button>
+                                    {prodName} ({sv.shadeName}) — [Stock: {sv.stock}]
+                                  </option>
                                 ))}
-                              </div>
-                            );
-                          })()}
-                        </div>
+                              </select>
+                              {!isLockedPredefinedCombo &&
+                                productVariants.length > 1 &&
+                                productVariants.some((x) => x.colorHex) && (
+                                  <div className="shade-quick-pills-row" style={{ marginTop: 4 }}>
+                                    {productVariants.map((sv) => (
+                                      <button
+                                        key={sv.id}
+                                        type="button"
+                                        disabled={sv.stock <= 0 && sv.id !== item.variantId}
+                                        className={`shade-quick-pill ${sv.id === item.variantId ? 'active' : ''}`}
+                                        style={{ padding: '3px 8px', fontSize: '0.72rem' }}
+                                        onClick={() => swapCartLineVariant(idx, sv.id)}
+                                      >
+                                        {sv.colorHex && (
+                                          <span
+                                            className="shade-inline-dot"
+                                            style={{ backgroundColor: sv.colorHex }}
+                                          />
+                                        )}
+                                        <span>{sv.shadeName}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                            </div>
+                          );
+                        })()}
 
                         <div className="field">
                           <label>Cantidad (disp: {v?.stock ?? 0})</label>
