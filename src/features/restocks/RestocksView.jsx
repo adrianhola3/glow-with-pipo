@@ -460,7 +460,16 @@ export default function RestocksView({
                   >
                     <div className="form-grid" style={{ alignItems: 'end' }}>
                       <div className="field">
-                        <label>{line.itemKind === 'supply' ? 'Empaque / Bolsita' : 'Producto / Tono'}</label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>{line.itemKind === 'supply' ? 'Empaque / Bolsita' : 'Producto / Tono'}</span>
+                          {curVariant?.colorHex && (
+                            <span
+                              className="shade-inline-dot"
+                              style={{ backgroundColor: curVariant.colorHex }}
+                              title={curVariant.colorHex}
+                            />
+                          )}
+                        </label>
                         {line.itemKind === 'variant' ? (
                           <select
                             value={line.variantId}

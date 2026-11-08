@@ -275,8 +275,11 @@ export function applyCreateProductWithInitialStock(db, payload) {
 
   const productId = payload.id || uid();
   const singleShade = (payload.singleShadeName || '').trim();
+  const singleColor = (payload.singleShadeColor || '').trim();
   const hasVariants =
-    Boolean(payload.hasVariants) || (singleShade !== '' && singleShade.toLowerCase() !== 'único');
+    Boolean(payload.hasVariants) ||
+    (singleShade !== '' && singleShade.toLowerCase() !== 'único') ||
+    singleColor !== '';
 
   const newProduct = {
     id: productId,
@@ -300,6 +303,7 @@ export function applyCreateProductWithInitialStock(db, payload) {
       : [
           {
             shadeName: singleShade || 'Único',
+            colorHex: payload.singleShadeColor ? payload.singleShadeColor.trim() : null,
             stock: Math.max(0, Math.trunc(toNumber(payload.initialStock, 0))),
             unitCost: roundUnitCost(payload.unitCost)
           }
@@ -314,12 +318,14 @@ export function applyCreateProductWithInitialStock(db, payload) {
     const stock = Math.max(0, Math.trunc(toNumber(v.stock, 0)));
     const unitCost = roundUnitCost(v.unitCost ?? payload.unitCost ?? 0);
     const variantId = v.id || uid();
+    const colorHex = v.colorHex && String(v.colorHex).trim() ? String(v.colorHex).trim() : null;
 
     next.variants.push({
       id: variantId,
       productId,
       sku,
       shadeName: (v.shadeName || 'Único').trim(),
+      colorHex,
       stock,
       unitCost,
       createdAt: new Date().toISOString()
@@ -390,12 +396,19 @@ export function applyUpdateProduct(db, payload) {
     );
 
     for (const vUpdate of payload.variants) {
+      const nextColorHex =
+        vUpdate.colorHex !== undefined
+          ? vUpdate.colorHex && String(vUpdate.colorHex).trim()
+            ? String(vUpdate.colorHex).trim()
+            : null
+          : undefined;
       if (vUpdate.id) {
         const vIdx = next.variants.findIndex((v) => v.id === vUpdate.id);
         if (vIdx >= 0) {
           next.variants[vIdx] = {
             ...next.variants[vIdx],
             shadeName: (vUpdate.shadeName || next.variants[vIdx].shadeName).trim(),
+            colorHex: nextColorHex !== undefined ? nextColorHex : (next.variants[vIdx].colorHex || null),
             stock: Math.max(0, Math.trunc(toNumber(vUpdate.stock, next.variants[vIdx].stock))),
             unitCost: roundUnitCost(vUpdate.unitCost ?? next.variants[vIdx].unitCost)
           };
@@ -407,6 +420,7 @@ export function applyUpdateProduct(db, payload) {
           productId: payload.id,
           sku: (vUpdate.sku || '').trim() || `${next.products[idx].code}-T${existingCount + 1}-${Date.now().toString(36).slice(-3)}`,
           shadeName: vUpdate.shadeName.trim(),
+          colorHex: nextColorHex || null,
           stock: Math.max(0, Math.trunc(toNumber(vUpdate.stock, 0))),
           unitCost: roundUnitCost(vUpdate.unitCost ?? 0),
           createdAt: new Date().toISOString()
@@ -414,8 +428,12 @@ export function applyUpdateProduct(db, payload) {
       }
     }
 
-    const finalCount = next.variants.filter((x) => x.productId === payload.id).length;
-    next.products[idx].hasVariants = finalCount > 1 || (finalCount === 1 && next.variants.find((x) => x.productId === payload.id)?.shadeName !== 'Único');
+    const finalVariants = next.variants.filter((x) => x.productId === payload.id);
+    const finalCount = finalVariants.length;
+    next.products[idx].hasVariants =
+      finalCount > 1 ||
+      (finalCount === 1 &&
+        (finalVariants[0]?.shadeName !== 'Único' || Boolean(finalVariants[0]?.colorHex)));
   }
 
   return next;
@@ -681,6 +699,7 @@ export function applyCreateSale(db, payload) {
       sourceComboName: item.sourceComboName || '',
       productNameSnapshot: prod ? prod.name : item.productNameSnapshot || 'Producto',
       shadeNameSnapshot: variant.shadeName || 'Único',
+      shadeColorSnapshot: variant.colorHex || null,
       quantity: qty,
       unitCostSnapshot: roundUnitCost(variant.unitCost),
       catalogUnitPriceSnapshot: roundMoney(prod ? prod.unitPrice : item.appliedUnitPrice),
@@ -1136,6 +1155,7 @@ export async function fetchSupabaseDatabase() {
       sourceComboName: si.source_combo_name || '',
       productNameSnapshot: si.product_name_snapshot,
       shadeNameSnapshot: si.shade_name_snapshot,
+      shadeColorSnapshot: si.shade_color_snapshot || null,
       quantity: si.quantity,
       unitCostSnapshot: Number(si.unit_cost_snapshot),
       catalogUnitPriceSnapshot: Number(si.catalog_unit_price_snapshot),
@@ -1210,6 +1230,7 @@ export async function fetchSupabaseDatabase() {
       productId: v.product_id,
       sku: v.sku,
       shadeName: v.shade_name,
+      colorHex: v.color_hex || null,
       stock: v.stock,
       unitCost: Number(v.unit_cost),
       createdAt: v.created_at
@@ -1326,8 +1347,11 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
 
   const productId = uid();
   const singleShade = (payload.singleShadeName || '').trim();
+  const singleColor = (payload.singleShadeColor || '').trim();
   const hasVariants =
-    Boolean(payload.hasVariants) || (singleShade !== '' && singleShade.toLowerCase() !== 'único');
+    Boolean(payload.hasVariants) ||
+    (singleShade !== '' && singleShade.toLowerCase() !== 'único') ||
+    singleColor !== '';
 
   const { error: prodErr } = await client.from('products').insert({
     id: productId,
@@ -1349,6 +1373,7 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
       : [
           {
             shadeName: singleShade || 'Único',
+            colorHex: singleColor || null,
             stock: Math.max(0, Math.trunc(toNumber(payload.initialStock, 0))),
             unitCost: roundUnitCost(payload.unitCost)
           }
@@ -1363,12 +1388,14 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
     const stock = Math.max(0, Math.trunc(toNumber(v.stock, 0)));
     const unitCost = roundUnitCost(v.unitCost ?? payload.unitCost ?? 0);
     const shadeName = (v.shadeName || 'Único').trim();
+    const colorHex = v.colorHex && String(v.colorHex).trim() ? String(v.colorHex).trim() : null;
 
     variantRows.push({
       id: variantId,
       product_id: productId,
       sku,
       shade_name: shadeName,
+      color_hex: colorHex,
       stock,
       unit_cost: unitCost
     });
@@ -1438,7 +1465,9 @@ export async function cloudUpdateProduct(currentDb, payload) {
     const activeVariants = payload.variants.filter((v) => (v.shadeName || '').trim() !== '');
     hasVariants =
       activeVariants.length > 1 ||
-      (activeVariants.length === 1 && activeVariants[0].shadeName.trim() !== 'Único');
+      (activeVariants.length === 1 &&
+        (activeVariants[0].shadeName.trim() !== 'Único' ||
+          Boolean(activeVariants[0].colorHex && String(activeVariants[0].colorHex).trim())));
   }
 
   const { error: prodErr } = await client
@@ -1476,11 +1505,14 @@ export async function cloudUpdateProduct(currentDb, payload) {
     for (let i = 0; i < payload.variants.length; i += 1) {
       const vUpdate = payload.variants[i];
       if (!vUpdate.shadeName || !vUpdate.shadeName.trim()) continue;
+      const colorHex =
+        vUpdate.colorHex && String(vUpdate.colorHex).trim() ? String(vUpdate.colorHex).trim() : null;
       if (vUpdate.id) {
         const { error: uErr } = await client
           .from('product_variants')
           .update({
             shade_name: vUpdate.shadeName.trim(),
+            color_hex: colorHex,
             stock: Math.max(0, Math.trunc(toNumber(vUpdate.stock, 0))),
             unit_cost: roundUnitCost(vUpdate.unitCost ?? 0)
           })
@@ -1495,6 +1527,7 @@ export async function cloudUpdateProduct(currentDb, payload) {
           product_id: payload.id,
           sku,
           shade_name: vUpdate.shadeName.trim(),
+          color_hex: colorHex,
           stock: Math.max(0, Math.trunc(toNumber(vUpdate.stock, 0))),
           unit_cost: roundUnitCost(vUpdate.unitCost ?? 0)
         });
@@ -1821,6 +1854,7 @@ export async function cloudCreateSale(currentDb, payload) {
       sourceComboName: item.sourceComboName || '',
       productNameSnapshot: prod ? prod.name : item.productNameSnapshot || 'Producto',
       shadeNameSnapshot: variant.shade_name || 'Único',
+      shadeColorSnapshot: variant.color_hex || null,
       quantity: qty,
       unitCostSnapshot: roundUnitCost(Number(variant.unit_cost)),
       catalogUnitPriceSnapshot: roundMoney(prod ? Number(prod.unit_price) : item.appliedUnitPrice),
@@ -1905,6 +1939,7 @@ export async function cloudCreateSale(currentDb, payload) {
         source_combo_name: si.sourceComboName || '',
         product_name_snapshot: si.productNameSnapshot,
         shade_name_snapshot: si.shadeNameSnapshot,
+        shade_color_snapshot: si.shadeColorSnapshot || null,
         quantity: si.quantity,
         unit_cost_snapshot: si.unitCostSnapshot,
         catalog_unit_price_snapshot: si.catalogUnitPriceSnapshot,
@@ -2157,6 +2192,7 @@ export async function syncStateToSupabase(db) {
         product_id: v.productId,
         sku: v.sku,
         shade_name: v.shadeName,
+        color_hex: v.colorHex || null,
         stock: v.stock,
         unit_cost: v.unitCost
       }))
@@ -2293,6 +2329,7 @@ export async function syncStateToSupabase(db) {
         source_combo_name: si.sourceComboName || '',
         product_name_snapshot: si.productNameSnapshot,
         shade_name_snapshot: si.shadeNameSnapshot,
+        shade_color_snapshot: si.shadeColorSnapshot || null,
         quantity: si.quantity,
         unit_cost_snapshot: si.unitCostSnapshot,
         catalog_unit_price_snapshot: si.catalogUnitPriceSnapshot,

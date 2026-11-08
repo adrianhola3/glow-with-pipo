@@ -77,6 +77,7 @@ create table if not exists public.product_variants (
   product_id uuid not null references public.products(id) on delete cascade,
   sku text not null unique,
   shade_name text not null default 'Único',
+  color_hex text default null,
   stock integer not null default 0 check (stock >= 0),
   unit_cost numeric(12,4) not null default 0 check (unit_cost >= 0),
   created_at timestamptz not null default now()
@@ -182,6 +183,7 @@ create table if not exists public.sale_items (
   source_combo_name text default '',
   product_name_snapshot text not null,
   shade_name_snapshot text not null default 'Único',
+  shade_color_snapshot text default null,
   quantity integer not null check (quantity > 0),
   unit_cost_snapshot numeric(12,4) not null,
   catalog_unit_price_snapshot numeric(12,2) not null,

@@ -21,6 +21,7 @@ import {
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
+  applyUpdateProduct,
   applyUpdateSaleStatus,
   listAutoSnapshots,
   restoreAutoSnapshot,
@@ -358,5 +359,71 @@ test('Single item product with custom shade name (e.g. Mascarilla Avena) creates
   assert.equal(db.variants.length, 1);
   assert.equal(db.variants[0].shadeName, 'Avena');
   assert.equal(db.variants[0].stock, 1);
+  assert.equal(db.variants[0].colorHex, null);
 });
+
+test('Optional colorHex is preserved in single-shade and multi-shade creation, product update, and sale snapshot', () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Rasuradores Faciales',
+    brand: 'P&W',
+    category: 'Accesorios',
+    unitCost: 1.5,
+    unitPrice: 3.0,
+    comboRatio: 0.75,
+    hasVariants: true,
+    entryType: 'initial_inventory',
+    variants: [
+      { shadeName: 'Rosado', colorHex: '#F48FB1', stock: 4, unitCost: 1.5 },
+      { shadeName: 'Morado', colorHex: '#C084FC', stock: 4, unitCost: 1.5 },
+      { shadeName: 'Sin Color Especial', colorHex: null, stock: 2, unitCost: 1.5 }
+    ]
+  });
+
+  assert.equal(db.variants.length, 3);
+  assert.equal(db.variants[0].colorHex, '#F48FB1');
+  assert.equal(db.variants[1].colorHex, '#C084FC');
+  assert.equal(db.variants[2].colorHex, null);
+
+  // Update color of second variant and clear first variant
+  db = applyUpdateProduct(db, {
+    id: db.products[0].id,
+    name: 'Rasuradores Faciales',
+    brand: 'P&W',
+    category: 'Accesorios',
+    unitPrice: 3.0,
+    comboRatio: 0.75,
+    comboPrice: 2.25,
+    variants: [
+      { ...db.variants[0], colorHex: null },
+      { ...db.variants[1], colorHex: '#881337' },
+      { ...db.variants[2], colorHex: '#FACC15' }
+    ]
+  });
+
+  assert.equal(db.variants[0].colorHex, null);
+  assert.equal(db.variants[1].colorHex, '#881337');
+  assert.equal(db.variants[2].colorHex, '#FACC15');
+
+  // Create sale and verify shadeColorSnapshot
+  db = applyCreateSale(db, {
+    newCustomer: {
+      name: 'Camila',
+      whatsapp: '999888777',
+      socialPlatform: 'instagram'
+    },
+    items: [
+      {
+        variantId: db.variants[1].id,
+        quantity: 1,
+        appliedUnitPrice: 3.0,
+        pricingMode: 'unit'
+      }
+    ]
+  });
+
+  assert.equal(db.sales[0].items[0].shadeNameSnapshot, 'Morado');
+  assert.equal(db.sales[0].items[0].shadeColorSnapshot, '#881337');
+});
+
 

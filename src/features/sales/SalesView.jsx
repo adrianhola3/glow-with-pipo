@@ -104,8 +104,11 @@ export default function SalesView({
     });
   }, [db.variants, productsMap]);
 
-  function addSingleVariantToCart() {
-    const targetId = selectedVariantToAdd || availableVariantOptions.find((o) => o.variant.stock > 0)?.id;
+  function addSingleVariantToCart(explicitVariantId = null) {
+    const targetId =
+      explicitVariantId ||
+      selectedVariantToAdd ||
+      availableVariantOptions.find((o) => o.variant.stock > 0)?.id;
     if (!targetId) return;
     const v = variantsMap.get(targetId);
     if (!v) return;
@@ -121,6 +124,7 @@ export default function SalesView({
         sourceComboName: '',
         productNameSnapshot: p.name,
         shadeNameSnapshot: v.shadeName,
+        shadeColorSnapshot: v.colorHex || null,
         quantity: 1,
         unitCostSnapshot: v.unitCost,
         catalogUnitPrice: p.unitPrice,
@@ -158,6 +162,7 @@ export default function SalesView({
         sourceComboName: combo.name,
         productNameSnapshot: prod.name,
         shadeNameSnapshot: variant.shadeName,
+        shadeColorSnapshot: variant.colorHex || null,
         quantity: ci.quantity,
         unitCostSnapshot: variant.unitCost,
         catalogUnitPrice: prod.unitPrice,
@@ -186,6 +191,7 @@ export default function SalesView({
       variantId: v.id,
       productNameSnapshot: p.name,
       shadeNameSnapshot: v.shadeName,
+      shadeColorSnapshot: v.colorHex || null,
       unitCostSnapshot: v.unitCost,
       catalogUnitPrice: p.unitPrice,
       catalogComboPrice: p.comboPrice,
@@ -443,29 +449,70 @@ export default function SalesView({
             </h3>
 
             <div className="grid-2" style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                <div className="field" style={{ flex: 1 }}>
-                  <label>Agregar producto individual</label>
-                  <select
-                    value={selectedVariantToAdd}
-                    onChange={(e) => setSelectedVariantToAdd(e.target.value)}
+              <div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Agregar producto individual</label>
+                    <select
+                      value={selectedVariantToAdd}
+                      onChange={(e) => setSelectedVariantToAdd(e.target.value)}
+                    >
+                      <option value="">Seleccionar producto / tono...</option>
+                      {availableVariantOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id} disabled={opt.variant.stock <= 0}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={availableVariantOptions.length === 0}
+                    onClick={() => addSingleVariantToCart()}
                   >
-                    <option value="">Seleccionar producto / tono...</option>
-                    {availableVariantOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id} disabled={opt.variant.stock <= 0}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    <Plus size={16} /> Añadir
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={availableVariantOptions.length === 0}
-                  onClick={addSingleVariantToCart}
-                >
-                  <Plus size={16} /> Añadir
-                </button>
+
+                {/* Visual Shade Color Quick-Pills for the selected product */}
+                {(() => {
+                  const selV = selectedVariantToAdd ? variantsMap.get(selectedVariantToAdd) : null;
+                  if (!selV) return null;
+                  const siblingVars = db.variants.filter((x) => x.productId === selV.productId);
+                  if (siblingVars.length <= 1 && !selV.colorHex) return null;
+                  return (
+                    <div className="shade-quick-pills-row">
+                      {siblingVars.map((sv) => {
+                        const isCurrent = sv.id === selectedVariantToAdd;
+                        return (
+                          <button
+                            key={sv.id}
+                            type="button"
+                            disabled={sv.stock <= 0}
+                            className={`shade-quick-pill ${isCurrent ? 'active' : ''}`}
+                            onClick={() => setSelectedVariantToAdd(sv.id)}
+                            title={
+                              sv.stock > 0
+                                ? `Seleccionar ${sv.shadeName} (Stock: ${sv.stock})`
+                                : `${sv.shadeName} agotado`
+                            }
+                          >
+                            {sv.colorHex && (
+                              <span
+                                className="shade-inline-dot"
+                                style={{ backgroundColor: sv.colorHex }}
+                              />
+                            )}
+                            <span>
+                              {sv.shadeName} ({sv.stock})
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               {db.combos.length > 0 && (
@@ -518,7 +565,16 @@ export default function SalesView({
 
                       <div className="form-grid" style={{ alignItems: 'end' }}>
                         <div className="field">
-                          <label>Producto / Tono (intercambiable X → Y)</label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>Producto / Tono (intercambiable X → Y)</span>
+                            {(v?.colorHex || item.shadeColorSnapshot) && (
+                              <span
+                                className="shade-inline-dot"
+                                style={{ backgroundColor: v?.colorHex || item.shadeColorSnapshot }}
+                                title={v?.colorHex || item.shadeColorSnapshot}
+                              />
+                            )}
+                          </label>
                           <select
                             value={item.variantId}
                             onChange={(e) => swapCartLineVariant(idx, e.target.value)}
@@ -533,6 +589,32 @@ export default function SalesView({
                               </option>
                             ))}
                           </select>
+                          {v && (() => {
+                            const siblingVars = db.variants.filter((x) => x.productId === v.productId);
+                            if (siblingVars.length <= 1 || !siblingVars.some((x) => x.colorHex)) return null;
+                            return (
+                              <div className="shade-quick-pills-row" style={{ marginTop: 4 }}>
+                                {siblingVars.map((sv) => (
+                                  <button
+                                    key={sv.id}
+                                    type="button"
+                                    disabled={sv.stock <= 0 && sv.id !== item.variantId}
+                                    className={`shade-quick-pill ${sv.id === item.variantId ? 'active' : ''}`}
+                                    style={{ padding: '3px 8px', fontSize: '0.72rem' }}
+                                    onClick={() => swapCartLineVariant(idx, sv.id)}
+                                  >
+                                    {sv.colorHex && (
+                                      <span
+                                        className="shade-inline-dot"
+                                        style={{ backgroundColor: sv.colorHex }}
+                                      />
+                                    )}
+                                    <span>{sv.shadeName}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <div className="field">
@@ -1022,14 +1104,30 @@ export default function SalesView({
                     <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: 'var(--pipo-ivory)', fontSize: '0.84rem' }}>
                       <div>
                         <strong>Productos ({sale.totalUnits} uds):</strong>{' '}
-                        {(sale.items || []).map((it, idx) => (
-                          <span key={idx}>
-                            {idx > 0 ? ' · ' : ''}
-                            {it.quantity}x {it.productNameSnapshot}
-                            {it.shadeNameSnapshot && it.shadeNameSnapshot !== 'Único' ? ` (${it.shadeNameSnapshot})` : ''} a{' '}
-                            {formatCurrency(it.appliedUnitPrice)}
-                          </span>
-                        ))}
+                        {(sale.items || []).map((it, idx) => {
+                          const liveVar = it.variantId ? variantsMap.get(it.variantId) : null;
+                          const itemColor = it.shadeColorSnapshot || liveVar?.colorHex || null;
+                          return (
+                            <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              {idx > 0 ? <span style={{ margin: '0 4px' }}>·</span> : null}
+                              <span>{it.quantity}x {it.productNameSnapshot}</span>
+                              {(it.shadeNameSnapshot && it.shadeNameSnapshot !== 'Único') || itemColor ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  (
+                                  {itemColor && (
+                                    <span
+                                      className="shade-inline-dot"
+                                      style={{ backgroundColor: itemColor }}
+                                      title={itemColor}
+                                    />
+                                  )}
+                                  {it.shadeNameSnapshot})
+                                </span>
+                              ) : null}
+                              <span>a {formatCurrency(it.appliedUnitPrice)}</span>
+                            </span>
+                          );
+                        })}
                       </div>
                       {(sale.suppliesUsed || []).length > 0 && (
                         <div style={{ marginTop: 4, color: 'var(--pipo-cocoa)' }}>

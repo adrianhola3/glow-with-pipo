@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Edit3, Filter, Gift, Layers, PackagePlus, Plus, Sparkles, Tag, Trash2 } from 'lucide-react';
 import CustomSelect from '../../components/CustomSelect.jsx';
+import ShadeColorPicker from '../../components/ShadeColorPicker.jsx';
 import {
   computeComboSummary,
   computeMargins,
@@ -44,11 +45,12 @@ export default function InventoryView({
   const [comboPriceInput, setComboPriceInput] = useState('');
   const [initialStock, setInitialStock] = useState('12');
   const [singleShadeName, setSingleShadeName] = useState('');
+  const [singleShadeColor, setSingleShadeColor] = useState(null);
   const [hasVariants, setHasVariants] = useState(false);
   const [shadeCountHelper, setShadeCountHelper] = useState('6');
   const [variantsDraft, setVariantsDraft] = useState([
-    { shadeName: 'Tono 01', stock: 4 },
-    { shadeName: 'Tono 02', stock: 4 }
+    { shadeName: 'Tono 01', colorHex: null, stock: 4 },
+    { shadeName: 'Tono 02', colorHex: null, stock: 4 }
   ]);
 
   // Supply Form State
@@ -138,7 +140,8 @@ export default function InventoryView({
     const remainder = totalUnits % count;
 
     const generated = Array.from({ length: count }, (_, idx) => ({
-      shadeName: `Tono ${String(idx + 1).padStart(2, '0')}`,
+      shadeName: variantsDraft[idx]?.shadeName || `Tono ${String(idx + 1).padStart(2, '0')}`,
+      colorHex: variantsDraft[idx]?.colorHex || null,
       stock: basePerShade + (idx < remainder ? 1 : 0)
     }));
     setVariantsDraft(generated);
@@ -170,6 +173,7 @@ export default function InventoryView({
       comboPrice: cleanComboPrice,
       hasVariants,
       singleShadeName: singleShadeName.trim(),
+      singleShadeColor: singleShadeColor || null,
       initialStock: toNumber(initialStock, 0),
       entryType: 'initial_inventory',
       variants: hasVariants
@@ -177,6 +181,7 @@ export default function InventoryView({
             .filter((v) => v.shadeName.trim() !== '')
             .map((v) => ({
               shadeName: v.shadeName.trim(),
+              colorHex: v.colorHex || null,
               stock: Math.max(0, Math.trunc(toNumber(v.stock, 0))),
               unitCost: cleanUnitCost
             }))
@@ -186,6 +191,7 @@ export default function InventoryView({
     setPCode('');
     setPName('');
     setSingleShadeName('');
+    setSingleShadeColor(null);
     setPkgTotalCost('');
     setUnitCostInput('');
     setUnitPriceInput('');
@@ -516,6 +522,12 @@ export default function InventoryView({
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: '0.84rem', fontWeight: 800 }}>Tono / Variedad:</span>
+                          <ShadeColorPicker
+                            value={singleShadeColor}
+                            onChange={(hex) => setSingleShadeColor(hex)}
+                            align="left"
+                            title="Elegir color para este tono (opcional)"
+                          />
                           <input
                             type="text"
                             placeholder="Ej. Avena (opcional)"
@@ -590,7 +602,7 @@ export default function InventoryView({
                           onClick={() =>
                             setVariantsDraft([
                               ...variantsDraft,
-                              { shadeName: `Tono ${variantsDraft.length + 1}`, stock: 0 }
+                              { shadeName: `Tono ${variantsDraft.length + 1}`, colorHex: null, stock: 0 }
                             ])
                           }
                         >
@@ -601,7 +613,7 @@ export default function InventoryView({
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(235px, 1fr))',
                           gap: 8
                         }}
                       >
@@ -617,6 +629,16 @@ export default function InventoryView({
                               background: 'var(--pipo-ivory)'
                             }}
                           >
+                            <ShadeColorPicker
+                              value={vd.colorHex || null}
+                              onChange={(hex) => {
+                                const copy = [...variantsDraft];
+                                copy[idx] = { ...copy[idx], colorHex: hex };
+                                setVariantsDraft(copy);
+                              }}
+                              align="left"
+                              title="Color de este tono (opcional)"
+                            />
                             <input
                               type="text"
                               placeholder="Nombre del tono"
@@ -777,17 +799,24 @@ export default function InventoryView({
                           </td>
                           <td data-label="Stock">
                             <div>
-                              <div style={{ marginBottom: p.hasVariants ? 5 : 0 }}>
+                              <div style={{ marginBottom: p.hasVariants || pVars.some((v) => v.colorHex) ? 5 : 0 }}>
                                 <span className={`badge badge-${stockBadge.tone}`}>Total: {totalStock} uds</span>
                               </div>
-                              {p.hasVariants && (
+                              {(p.hasVariants || pVars.some((v) => v.colorHex || (v.shadeName && v.shadeName !== 'Único'))) && (
                                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                   {pVars.map((v) => (
                                     <span
                                       key={v.id}
                                       className={`badge ${v.stock === 0 ? 'badge-danger' : 'badge-brand'}`}
-                                      style={{ fontSize: '0.7rem' }}
+                                      style={{ fontSize: '0.7rem', gap: 5 }}
                                     >
+                                      {v.colorHex && (
+                                        <span
+                                          className="shade-inline-dot"
+                                          style={{ backgroundColor: v.colorHex }}
+                                          title={v.colorHex}
+                                        />
+                                      )}
                                       {v.shadeName}: {v.stock}
                                     </span>
                                   ))}
@@ -1119,9 +1148,22 @@ export default function InventoryView({
                           const p = productsMap.get(ci.productId);
                           const v = ci.variantId ? variantsMap.get(ci.variantId) : null;
                           return (
-                            <div key={i}>
-                              • {ci.quantity}x {p?.name || 'Producto'}{' '}
-                              {v && v.shadeName !== 'Único' ? `(${v.shadeName})` : ''}
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span>
+                                • {ci.quantity}x {p?.name || 'Producto'}
+                              </span>
+                              {v && (v.shadeName !== 'Único' || v.colorHex) && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  (
+                                  {v.colorHex && (
+                                    <span
+                                      className="shade-inline-dot"
+                                      style={{ backgroundColor: v.colorHex }}
+                                    />
+                                  )}
+                                  {v.shadeName})
+                                </span>
+                              )}
                             </div>
                           );
                         })}
@@ -1490,6 +1532,7 @@ export default function InventoryView({
                           ...editingProduct.variants,
                           {
                             shadeName: `Tono ${editingProduct.variants.length + 1}`,
+                            colorHex: null,
                             stock: 0,
                             unitCost: editingProduct.variants[0]?.unitCost || 0
                           }
@@ -1504,6 +1547,16 @@ export default function InventoryView({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {editingProduct.variants.map((v, idx) => (
                     <div key={v.id || idx} className="variant-edit-row">
+                      <ShadeColorPicker
+                        value={v.colorHex || null}
+                        onChange={(hex) => {
+                          const copy = [...editingProduct.variants];
+                          copy[idx] = { ...copy[idx], colorHex: hex };
+                          setEditingProduct({ ...editingProduct, variants: copy });
+                        }}
+                        align="left"
+                        title="Color de este tono (opcional)"
+                      />
                       <input
                         type="text"
                         value={v.shadeName}

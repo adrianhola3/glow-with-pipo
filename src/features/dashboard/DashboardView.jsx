@@ -269,7 +269,14 @@ export default function DashboardView({
                     fontSize: '0.84rem'
                   }}
                 >
-                  <span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {v.colorHex && (
+                      <span
+                        className="shade-inline-dot"
+                        style={{ backgroundColor: v.colorHex }}
+                        title={v.colorHex}
+                      />
+                    )}
                     <strong>{v.productName}</strong>{' '}
                     {v.shadeName && v.shadeName !== 'Único' ? `· ${v.shadeName}` : ''}{' '}
                     {v.brand ? <span style={{ color: 'var(--pipo-muted)' }}>({v.brand})</span> : null}
