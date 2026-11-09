@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   CheckCircle2,
+  Clock,
   Cloud,
   Download,
   Eye,
@@ -13,9 +14,11 @@ import {
 } from 'lucide-react';
 import {
   exportLocalDbJson,
+  getSessionTimeoutMinutes,
   getSupabaseConfig,
   listAutoSnapshots,
   saveSupabaseConfig,
+  setSessionTimeoutMinutes,
   updateCloudUserProfile
 } from '../../adapters/storageRepository.js';
 
@@ -45,6 +48,7 @@ export default function SettingsView({
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [timeoutMinutes, setTimeoutMinutes] = useState(() => getSessionTimeoutMinutes());
 
   async function handleUpdateCloudProfile(e) {
     e.preventDefault();
@@ -292,6 +296,60 @@ export default function SettingsView({
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Inactivity Session Timeout Card */}
+      <div className="card" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">
+          <Clock size={18} /> Límite de Sesión por Inactividad
+        </h3>
+        <p style={{ fontSize: '0.83rem', color: 'var(--pipo-muted)', marginTop: 0, marginBottom: 12 }}>
+          Por seguridad empresarial y resguardo del inventario, ventas y datos sensibles de clientes, el sistema cerrará automáticamente la sesión del personal tras un período sin actividad en pantalla.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--pipo-cocoa)' }}>
+            Tiempo de inactividad permitido:
+          </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {[
+              { value: 15, label: '15 minutos', badge: 'Alta seguridad' },
+              { value: 30, label: '30 minutos', badge: 'Recomendado' },
+              { value: 60, label: '1 hora' },
+              { value: 120, label: '2 horas' }
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`btn btn-sm ${timeoutMinutes === opt.value ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => {
+                  setTimeoutMinutes(opt.value);
+                  setSessionTimeoutMinutes(opt.value);
+                  onNotify(`Límite de inactividad configurado a ${opt.label}.`);
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span>{opt.label}</span>
+                {opt.badge && (
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      padding: '1px 6px',
+                      borderRadius: 10,
+                      background: timeoutMinutes === opt.value ? 'rgba(255,255,255,0.25)' : 'var(--pipo-cream-dark)',
+                      color: timeoutMinutes === opt.value ? '#fff' : 'var(--pipo-cocoa)'
+                    }}
+                  >
+                    {opt.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: '0.78rem', color: 'var(--pipo-muted)' }}>
+            Aplica automáticamente tanto a la versión web (PC/laptop) como a la aplicación móvil instalada en teléfonos.
+          </span>
         </div>
       </div>
 

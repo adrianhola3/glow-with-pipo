@@ -65,7 +65,9 @@ import {
   getSavedSession,
   getSupabaseConfig,
   importLocalDbJson,
+  isSessionExpired,
   loadLocalDb,
+  recordUserActivity,
   restoreSupabaseSession,
   saveLocalDb,
   signOutApp,
@@ -94,6 +96,7 @@ export default function App() {
     return 'storefront';
   });
   const [isStaffPreviewActive, setIsStaffPreviewActive] = useState(false);
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
   const [toast, setToast] = useState(null);
   const [showCloudModalFromLogin, setShowCloudModalFromLogin] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -196,14 +199,71 @@ export default function App() {
     }
   };
 
-  // Restore active Supabase session on startup
+  // Restore active Supabase session on startup (with inactivity timeout check)
   useEffect(() => {
     restoreSupabaseSession()
       .then((sess) => {
-        if (sess) setSession(sess);
+        if (sess) {
+          setSession(sess);
+          recordUserActivity();
+        } else if (isSessionExpired()) {
+          setSessionExpiredNotice(true);
+          setUnauthView('login');
+        }
       })
       .catch(() => {});
   }, []);
+
+  // Inactivity tracking and automatic session expiration
+  useEffect(() => {
+    if (!session) return;
+
+    recordUserActivity();
+
+    let lastRecorded = Date.now();
+    const handleUserActivity = () => {
+      const now = Date.now();
+      // Throttle recording to disk to once every 10 seconds
+      if (now - lastRecorded > 10000) {
+        lastRecorded = now;
+        recordUserActivity(now);
+      }
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach((evt) => {
+      window.addEventListener(evt, handleUserActivity, { passive: true });
+    });
+
+    const checkInactivity = async () => {
+      if (isSessionExpired()) {
+        await signOutApp();
+        setSession(null);
+        setUnauthView('login');
+        setSessionExpiredNotice(true);
+        notify('Tu sesión ha expirado por inactividad. Ingresa de nuevo.', true);
+      }
+    };
+
+    // Check every 15 seconds
+    const intervalId = setInterval(checkInactivity, 15000);
+
+    // Also check immediately when tab becomes visible / phone wakes up
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkInactivity();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      activityEvents.forEach((evt) => {
+        window.removeEventListener(evt, handleUserActivity);
+      });
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [session, notify]);
 
   // Cross-tab local storage sync
   useEffect(() => {
@@ -405,11 +465,16 @@ export default function App() {
         <>
           {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
           <LoginView
+            sessionExpired={sessionExpiredNotice}
             onLoggedIn={(sess) => {
+              setSessionExpiredNotice(false);
               setSession(sess);
               notify(`Hola, ${sess.name}`);
             }}
-            onBackToStorefront={() => setUnauthView('storefront')}
+            onBackToStorefront={() => {
+              setSessionExpiredNotice(false);
+              setUnauthView('storefront');
+            }}
           />
         </>
       );

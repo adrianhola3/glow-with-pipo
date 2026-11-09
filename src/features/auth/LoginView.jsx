@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Eye, EyeOff, Lock, Sparkles, Store, UserCheck } from 'lucide-react';
 import { signInApp } from '../../adapters/storageRepository.js';
 
-export default function LoginView({ onLoggedIn, onBackToStorefront }) {
+export default function LoginView({ onLoggedIn, onBackToStorefront, sessionExpired }) {
   const [selectedUser, setSelectedUser] = useState('adrian'); // 'adrian' | 'fabiana'
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -48,6 +48,27 @@ export default function LoginView({ onLoggedIn, onBackToStorefront }) {
         </div>
 
         <div className="login-body">
+          {sessionExpired && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 14px',
+                borderRadius: 12,
+                background: 'rgba(217, 119, 6, 0.1)',
+                border: '1px solid rgba(217, 119, 6, 0.3)',
+                color: '#92400e',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                marginBottom: 12,
+                lineHeight: 1.35
+              }}
+            >
+              <Lock size={16} style={{ flexShrink: 0 }} />
+              <span>Tu sesión se cerró por inactividad. Ingresa tu contraseña para continuar.</span>
+            </div>
+          )}
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div>
               <div

@@ -12,6 +12,9 @@ import { DEFAULT_COMBO_RATIO, PRODUCT_CATEGORIES } from '../domain/constants.js'
 const LOCAL_DB_KEY = 'glow_with_pipo_db_v1';
 const LOCAL_AUTH_KEY = 'glow_with_pipo_session_v1';
 const CLOUD_CONFIG_KEY = 'glow_with_pipo_supabase_cfg_v1';
+export const SESSION_TIMEOUT_KEY = 'glow_with_pipo_session_timeout_minutes_v1';
+export const LAST_ACTIVITY_KEY = 'glow_with_pipo_last_activity_v1';
+export const DEFAULT_SESSION_TIMEOUT_MINUTES = 30; // 30 minutos de inactividad estándar
 export const AUTO_SNAPSHOT_PREFIX = 'glow_pipo_backup_auto_';
 export const MAX_AUTO_SNAPSHOTS = 5;
 
@@ -1084,8 +1087,59 @@ export function applyUpdateStorefrontMerchandising(db, payload) {
 // Authentication & Live Realtime Subscription
 // ============================================================================
 
+export function getSessionTimeoutMinutes() {
+  if (!hasBrowserStorage()) return DEFAULT_SESSION_TIMEOUT_MINUTES;
+  try {
+    const raw = localStorage.getItem(SESSION_TIMEOUT_KEY);
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_TIMEOUT_MINUTES;
+  } catch {
+    return DEFAULT_SESSION_TIMEOUT_MINUTES;
+  }
+}
+
+export function setSessionTimeoutMinutes(minutes) {
+  if (!hasBrowserStorage()) return;
+  const num = parseInt(minutes, 10);
+  if (Number.isFinite(num) && num > 0) {
+    localStorage.setItem(SESSION_TIMEOUT_KEY, String(num));
+  }
+}
+
+export function recordUserActivity(timestamp = Date.now()) {
+  if (!hasBrowserStorage()) return;
+  try {
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(timestamp));
+  } catch {}
+}
+
+export function getLastUserActivity() {
+  if (!hasBrowserStorage()) return 0;
+  try {
+    const raw = localStorage.getItem(LAST_ACTIVITY_KEY);
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function isSessionExpired(now = Date.now()) {
+  const last = getLastUserActivity();
+  if (!last) return false;
+  const timeoutMs = getSessionTimeoutMinutes() * 60 * 1000;
+  return now - last > timeoutMs;
+}
+
 export function getSavedSession() {
   if (!hasBrowserStorage()) return null;
+  if (isSessionExpired()) {
+    try {
+      localStorage.removeItem(LOCAL_AUTH_KEY);
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
+    } catch {}
+    return null;
+  }
   try {
     const raw = localStorage.getItem(LOCAL_AUTH_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -1095,12 +1149,20 @@ export function getSavedSession() {
 }
 
 export async function restoreSupabaseSession() {
+  if (isSessionExpired()) {
+    await signOutApp();
+    return null;
+  }
   const client = getSupabaseClient();
   if (!client) return getSavedSession();
 
   try {
     const { data, error } = await client.auth.getSession();
     if (!error && data?.session?.user) {
+      if (isSessionExpired()) {
+        await signOutApp();
+        return null;
+      }
       client.realtime.setAuth(data.session.access_token);
       const user = data.session.user;
       const sessionUser = {
@@ -1151,6 +1213,7 @@ export async function signInApp({ email, password, mode = 'supabase' }) {
     };
     if (hasBrowserStorage()) {
       localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(sessionUser));
+      recordUserActivity();
     }
     return sessionUser;
   }
@@ -1175,6 +1238,7 @@ export async function signInApp({ email, password, mode = 'supabase' }) {
   };
   if (hasBrowserStorage()) {
     localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(sessionUser));
+    recordUserActivity();
   }
   return sessionUser;
 }
@@ -1208,6 +1272,7 @@ export async function updateCloudUserProfile({ name, newPassword }) {
   };
   if (hasBrowserStorage()) {
     localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(updatedSession));
+    recordUserActivity();
   }
   return updatedSession;
 }
@@ -1219,6 +1284,7 @@ export async function signOutApp() {
   }
   if (hasBrowserStorage()) {
     localStorage.removeItem(LOCAL_AUTH_KEY);
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
   }
 }
 
