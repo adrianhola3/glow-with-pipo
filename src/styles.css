@@ -2995,6 +2995,26 @@ select:hover,
   }
 }
 
+@keyframes pipoShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.pipo-skeleton-shimmer {
+  background: linear-gradient(90deg, #f7ece7 0%, #fef5f2 50%, #f7ece7 100%);
+  background-size: 200% 100%;
+  animation: pipoShimmer 1.5s infinite ease-in-out;
+}
+
+.pipo-skeleton-card {
+  pointer-events: none;
+  border-color: rgba(236, 208, 196, 0.4);
+}
+
 /* Mobile responsive rules */
 @media (max-width: 768px) {
   .pipo-store-navlinks {

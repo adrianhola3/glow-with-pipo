@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
   X
 } from 'lucide-react';
 import { formatMoney } from '../../domain/calculations.js';
+import { PRODUCT_CATEGORIES } from '../../domain/constants.js';
 import {
   checkWebOrderYapeStatus,
   fetchPublicStorefrontCatalog,
@@ -56,21 +57,205 @@ function getZoneLabel(zoneType = '') {
   }
 }
 
+const STOREFRONT_CACHE_KEY = 'glow_with_pipo_public_catalog_cache_v2';
+
+function buildCatalogFromDb(source) {
+  if (!source) return null;
+  const rawProducts = Array.isArray(source.products) ? source.products : [];
+  if (rawProducts.length === 0) return null;
+
+  const variants = Array.isArray(source.variants) ? source.variants : [];
+  const variantsByProd = new Map();
+  for (const v of variants) {
+    const arr = variantsByProd.get(v.productId) || [];
+    arr.push(v);
+    variantsByProd.set(v.productId, arr);
+  }
+
+  const productsWithVariants = rawProducts
+    .filter((p) => p.active !== false && p.isVisiblePublic !== false)
+    .map((p) => ({
+      ...p,
+      unitPrice: Number(p.unitPrice || 0),
+      comboPrice: Number(p.comboPrice || p.unitPrice || 0),
+      variants: p.variants && p.variants.length > 0 ? p.variants : (variantsByProd.get(p.id) || [])
+    }));
+
+  const combos = (source.combos || [])
+    .filter((c) => c.active !== false && c.isVisiblePublic !== false)
+    .map((c) => ({
+      ...c,
+      comboType: c.comboType || 'predefined',
+      items: c.items || []
+    }));
+
+  const deliveryPoints = (source.deliveryPoints || []).filter((dp) => dp.active !== false);
+  const deliverySlots =
+    source.deliverySlots && source.deliverySlots.length > 0
+      ? source.deliverySlots
+      : deliveryPoints.flatMap((pt) =>
+          (pt.slots || []).map((sl) => ({ ...sl, deliveryPointId: pt.id }))
+        );
+
+  return {
+    categories:
+      source.categories && source.categories.length > 0
+        ? source.categories
+        : [...PRODUCT_CATEGORIES],
+    products: productsWithVariants,
+    combos,
+    deliveryPoints,
+    deliverySlots,
+    yapeGateway: source.yapeGateway || null
+  };
+}
+
+function StorefrontProductImage({
+  src,
+  alt,
+  className = 'pipo-product-img',
+  fallbackEmoji = '💄',
+  fallbackBrand = 'GLOW WITH PIPO'
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setHasError(false);
+  }, [src]);
+
+  if (!src || hasError) {
+    return (
+      <div className="pipo-product-placeholder">
+        <span className="pipo-placeholder-emoji">{fallbackEmoji}</span>
+        <span className="pipo-placeholder-brand">{fallbackBrand}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {!loaded && (
+        <div
+          className="pipo-skeleton-shimmer"
+          style={{ position: 'absolute', inset: 0, zIndex: 1 }}
+        />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        className={className}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setHasError(true)}
+        style={{
+          opacity: loaded ? 1 : 0,
+          transition: 'opacity 0.28s ease-in-out',
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover'
+        }}
+      />
+    </div>
+  );
+}
+
+function StorefrontSkeletonGrid() {
+  return (
+    <div className="pipo-products-grid" aria-label="Cargando productos...">
+      {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+        <article key={n} className="pipo-product-card pipo-skeleton-card">
+          <div className="pipo-product-visual pipo-skeleton-shimmer" />
+          <div
+            className="pipo-product-body"
+            style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14 }}
+          >
+            <div
+              className="pipo-skeleton-shimmer"
+              style={{ width: '40%', height: 12, borderRadius: 6 }}
+            />
+            <div
+              className="pipo-skeleton-shimmer"
+              style={{ width: '85%', height: 16, borderRadius: 6 }}
+            />
+            <div style={{ display: 'flex', gap: 6, margin: '4px 0' }}>
+              <div
+                className="pipo-skeleton-shimmer"
+                style={{ width: 16, height: 16, borderRadius: '50%' }}
+              />
+              <div
+                className="pipo-skeleton-shimmer"
+                style={{ width: 16, height: 16, borderRadius: '50%' }}
+              />
+              <div
+                className="pipo-skeleton-shimmer"
+                style={{ width: 16, height: 16, borderRadius: '50%' }}
+              />
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: 8
+              }}
+            >
+              <div
+                className="pipo-skeleton-shimmer"
+                style={{ width: '35%', height: 20, borderRadius: 8 }}
+              />
+              <div
+                className="pipo-skeleton-shimmer"
+                style={{ width: '45%', height: 32, borderRadius: 16 }}
+              />
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export default function StorefrontView({
   fallbackDb,
   isStaffLoggedIn = false,
   onOpenStaffLogin,
   onReturnToErp
 }) {
-  const [catalog, setCatalog] = useState(() => ({
-    categories: [],
-    products: [],
-    combos: [],
-    deliveryPoints: [],
-    deliverySlots: [],
-    yapeGateway: null
-  }));
-  const [loadingCatalog, setLoadingCatalog] = useState(true);
+  const [catalog, setCatalog] = useState(() => {
+    // 1. Intentar desde fallbackDb (inmediato si el usuario navega desde el ERP o ya cargó la app)
+    const fromFallback = buildCatalogFromDb(fallbackDb);
+    if (fromFallback && fromFallback.products.length > 0) return fromFallback;
+
+    // 2. Intentar desde localStorage (instantáneo para clientes que reingresan a la web)
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(STOREFRONT_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.products) && parsed.products.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+
+    return {
+      categories: [...PRODUCT_CATEGORIES],
+      products: [],
+      combos: [],
+      deliveryPoints: [],
+      deliverySlots: [],
+      yapeGateway: null
+    };
+  });
+
+  // Solo mostrar skeleton loader si el catálogo está completamente vacío (primer ingreso limpio)
+  const [loadingCatalog, setLoadingCatalog] = useState(() => {
+    return catalog.products.length === 0;
+  });
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState({});
@@ -115,9 +300,14 @@ export default function StorefrontView({
   }, [checkoutOpen, customizingCombo, isCartOpen]);
 
   const loadStorefront = useCallback(async () => {
-    setLoadingCatalog(true);
+    // Si ya hay productos visibles en pantalla, revalida silenciosamente en background sin bloquear
+    if (catalog.products.length === 0) {
+      setLoadingCatalog(true);
+    }
     try {
       const data = await fetchPublicStorefrontCatalog(fallbackDb);
+      if (!data) return;
+
       const variantsByProd = new Map();
       for (const v of data.variants || []) {
         const arr = variantsByProd.get(v.productId) || [];
@@ -147,6 +337,13 @@ export default function StorefrontView({
 
       setCatalog(normalizedCatalog);
 
+      // Guardar en caché local para próximas visitas instantáneas a 0ms
+      if (typeof localStorage !== 'undefined' && productsWithVariants.length > 0) {
+        try {
+          localStorage.setItem(STOREFRONT_CACHE_KEY, JSON.stringify(normalizedCatalog));
+        } catch {}
+      }
+
       const initialVariants = {};
       for (const prod of productsWithVariants) {
         const availableVar =
@@ -162,11 +359,27 @@ export default function StorefrontView({
     } finally {
       setLoadingCatalog(false);
     }
-  }, [fallbackDb]);
+  }, [catalog.products.length]);
 
   useEffect(() => {
     loadStorefront();
   }, [loadStorefront]);
+
+  // Sincronizar suavemente si fallbackDb cambia desde el ERP sin parpadear la interfaz
+  const prevFallbackCount = useRef((fallbackDb?.products || []).length);
+  useEffect(() => {
+    if (fallbackDb && Array.isArray(fallbackDb.products) && fallbackDb.products.length > 0) {
+      const currentCount = fallbackDb.products.length;
+      if (currentCount !== prevFallbackCount.current) {
+        prevFallbackCount.current = currentCount;
+        const fromDb = buildCatalogFromDb(fallbackDb);
+        if (fromDb && fromDb.products.length > 0) {
+          setCatalog(fromDb);
+          setLoadingCatalog(false);
+        }
+      }
+    }
+  }, [fallbackDb]);
 
   // Wake-on-Checkout: only wake up the phone detector when the customer opens Checkout
   useEffect(() => {
@@ -715,7 +928,7 @@ export default function StorefrontView({
             className={`pipo-cat-pill ${activeCategory === 'ALL' ? 'active' : ''}`}
             onClick={() => setActiveCategory('ALL')}
           >
-            🌸 Todos ({(catalog.products || []).length})
+            🌸 Todos {catalog.products?.length ? `(${catalog.products.length})` : ''}
           </button>
           {(catalog.combos || []).length > 0 && (
             <button
@@ -740,10 +953,7 @@ export default function StorefrontView({
         </div>
 
         {loadingCatalog ? (
-          <div className="pipo-store-loading">
-            <RefreshCw size={28} className="pipo-spin" />
-            <p>Cargando el catálogo de Glow with Pipo...</p>
-          </div>
+          <StorefrontSkeletonGrid />
         ) : (
           <>
             {/* Combos Section */}
@@ -766,14 +976,12 @@ export default function StorefrontView({
                         className={`pipo-combo-card ${!comboMeta.isAvailable ? 'out-of-stock' : ''}`}
                       >
                         <div className="pipo-combo-visual">
-                          {combo.imageUrl ? (
-                            <img src={combo.imageUrl} alt={combo.name} className="pipo-product-img" />
-                          ) : (
-                            <div className="pipo-combo-placeholder">
-                              <span className="pipo-placeholder-emoji">🎁✨</span>
-                              <span className="pipo-placeholder-brand">COMBO PIPO</span>
-                            </div>
-                          )}
+                          <StorefrontProductImage
+                            src={combo.imageUrl}
+                            alt={combo.name}
+                            fallbackEmoji="🎁✨"
+                            fallbackBrand="COMBO PIPO"
+                          />
                           <span className="pipo-combo-type-tag">
                             {combo.comboType === 'customizable'
                               ? '🎨 Elige tus tonos'
@@ -885,22 +1093,12 @@ export default function StorefrontView({
                       return (
                         <article key={product.id} className="pipo-product-card">
                           <div className="pipo-product-visual">
-                            {product.imageUrl ? (
-                              <img
-                                src={product.imageUrl}
-                                alt={product.name}
-                                className="pipo-product-img"
-                              />
-                            ) : (
-                              <div className="pipo-product-placeholder">
-                                <span className="pipo-placeholder-emoji">
-                                  {getCategoryEmoji(product.category)}
-                                </span>
-                                <span className="pipo-placeholder-brand">
-                                  {product.brand || 'GLOW WITH PIPO'}
-                                </span>
-                              </div>
-                            )}
+                            <StorefrontProductImage
+                              src={product.imageUrl}
+                              alt={product.name}
+                              fallbackEmoji={getCategoryEmoji(product.category)}
+                              fallbackBrand={product.brand || 'GLOW WITH PIPO'}
+                            />
 
                             <span className="pipo-product-cat-badge">{product.category}</span>
                             {product.isFeatured && (
