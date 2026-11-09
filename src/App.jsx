@@ -8,6 +8,7 @@ import {
   Package,
   Settings,
   ShoppingBag,
+  Store,
   Truck
 } from 'lucide-react';
 import { computeDashboardMetrics } from './domain/calculations.js';
@@ -23,12 +24,17 @@ import {
   applyDeleteCategory,
   applyDeleteCombo,
   applyDeleteCustomer,
+  applyDeleteDeliveryPoint,
+  applyDeleteDeliverySlot,
   applyDeleteProduct,
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
+  applySaveDeliveryPoint,
+  applySaveDeliverySlot,
   applyUpdateProduct,
   applyUpdateSaleStatus,
+  applyUpdateStorefrontMerchandising,
   cloudAddCategory,
   cloudAddSalePayment,
   cloudCreateProductWithInitialStock,
@@ -36,16 +42,23 @@ import {
   cloudDeleteCategory,
   cloudDeleteCombo,
   cloudDeleteCustomer,
+  cloudDeleteDeliveryPoint,
+  cloudDeleteDeliverySlot,
   cloudDeleteProduct,
   cloudDeleteSupplier,
   cloudDeleteSupply,
   cloudRecordRestock,
   cloudSaveCombo,
   cloudSaveCustomer,
+  cloudSaveDeliveryPoint,
+  cloudSaveDeliverySlot,
   cloudSaveSupplier,
   cloudSaveSupply,
+  cloudSimulateOrRegisterYapePayment,
   cloudUpdateProduct,
   cloudUpdateSaleStatus,
+  cloudUpdateStorefrontMerchandising,
+  cloudUpdateYapeGateway,
   fetchSupabaseDatabase,
   getSavedSession,
   getSupabaseConfig,
@@ -64,11 +77,21 @@ import InventoryView from './features/inventory/InventoryView.jsx';
 import RestocksView from './features/restocks/RestocksView.jsx';
 import SalesView from './features/sales/SalesView.jsx';
 import SettingsView from './features/settings/SettingsView.jsx';
+import StorefrontView from './features/storefront/StorefrontView.jsx';
+import StorefrontAdminView from './features/storefront/StorefrontAdminView.jsx';
 
 export default function App() {
   const [session, setSession] = useState(() => getSavedSession());
   const [db, setDb] = useState(() => loadLocalDb());
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [unauthView, setUnauthView] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const hash = (window.location.hash || '').toLowerCase();
+      if (hash.includes('login') || hash.includes('staff') || hash.includes('erp')) return 'login';
+    }
+    return 'storefront';
+  });
+  const [isStaffPreviewActive, setIsStaffPreviewActive] = useState(false);
   const [toast, setToast] = useState(null);
   const [showCloudModalFromLogin, setShowCloudModalFromLogin] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -102,6 +125,26 @@ export default function App() {
     }, 3800);
   }, []);
 
+  // Alert Adrián & Fabiana when a new web order is received in db.sales
+  const prevWebSalesCountRef = useRef(
+    (db.sales || []).filter((s) => s.orderSource === 'web').length
+  );
+  useEffect(() => {
+    const currentWebCount = (db.sales || []).filter((s) => s.orderSource === 'web').length;
+    if (session && currentWebCount > prevWebSalesCountRef.current) {
+      notify('🌸 ¡Nuevo pedido web recibido de cliente!');
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        try {
+          new Notification('Glow with Pipo — ¡Nuevo Pedido Web!', {
+            body: 'Un cliente acaba de registrar un pedido en la tienda web.',
+            icon: `${import.meta.env.BASE_URL || './'}icon-192.png`
+          });
+        } catch {}
+      }
+    }
+    prevWebSalesCountRef.current = currentWebCount;
+  }, [db.sales, session, notify]);
+
   // Swipe navigation between menu options
   const touchStartRef = useRef({ x: 0, y: 0, time: 0, ignore: false });
 
@@ -131,7 +174,7 @@ export default function App() {
 
     // Minimum 55px horizontal swipe, predominantly horizontal (dx > dy * 1.4), within 500ms
     if (dt < 500 && Math.abs(dx) >= 55 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-      const tabOrder = ['dashboard', 'sales', 'inventory', 'restocks', 'settings'];
+      const tabOrder = ['dashboard', 'sales', 'storefront', 'inventory', 'restocks', 'settings'];
       const currentIndex = tabOrder.indexOf(activeTab);
       if (currentIndex === -1) return;
 
@@ -355,23 +398,57 @@ export default function App() {
   }, [isSyncing, session, realtimeStatus]);
 
   if (!session) {
+    if (unauthView === 'login') {
+      return (
+        <>
+          {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
+          <LoginView
+            onLoggedIn={(sess) => {
+              setSession(sess);
+              notify(`Hola, ${sess.name}`);
+            }}
+            onBackToStorefront={() => setUnauthView('storefront')}
+          />
+        </>
+      );
+    }
     return (
       <>
         {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
-        <LoginView
-          onLoggedIn={(sess) => {
-            setSession(sess);
-            notify(`Hola, ${sess.name}`);
-          }}
+        <StorefrontView
+          fallbackDb={db}
+          isStaffLoggedIn={false}
+          onOpenStaffLogin={() => setUnauthView('login')}
+        />
+      </>
+    );
+  }
+
+  if (isStaffPreviewActive) {
+    return (
+      <>
+        {toast && <div className={`toast-banner ${toast.isError ? 'error' : ''}`}>{toast.text}</div>}
+        <StorefrontView
+          fallbackDb={db}
+          isStaffLoggedIn={true}
+          onReturnToErp={() => setIsStaffPreviewActive(false)}
         />
       </>
     );
   }
 
   const pendingCount = metrics.pendingDeliveries.length;
+  const pendingWebCount = (db.sales || []).filter(
+    (s) =>
+      s.orderSource === 'web' &&
+      s.paymentVerificationStatus === 'pending_yape_verification' &&
+      s.status !== 'cancelled'
+  ).length;
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', mobileLabel: 'Inicio', icon: LayoutDashboard, badge: 0 },
     { id: 'sales', label: 'Pedidos y Ventas', mobileLabel: 'Vender', icon: ShoppingBag, badge: pendingCount },
+    { id: 'storefront', label: 'Tienda Web & Entregas', mobileLabel: 'Tienda', icon: Store, badge: pendingWebCount },
     { id: 'inventory', label: 'Stock y Combos', mobileLabel: 'Stock', icon: Package, badge: 0 },
     { id: 'restocks', label: 'Compras y Prov.', mobileLabel: 'Compras', icon: Truck, badge: 0 },
     { id: 'settings', label: 'Nube y Ajustes', mobileLabel: 'Ajustes', icon: Settings, badge: 0 }
@@ -651,6 +728,73 @@ export default function App() {
                   successMsg: 'Cliente eliminado del directorio.'
                 })
               }
+            />
+          )}
+
+          {activeTab === 'storefront' && (
+            <StorefrontAdminView
+              db={db}
+              onSaveDeliveryPoint={(payload) =>
+                commitMutation({
+                  optimisticFn: (cur) => applySaveDeliveryPoint(cur, payload),
+                  cloudFn: (cur) => cloudSaveDeliveryPoint(cur, payload),
+                  successMsg: 'Punto de entrega guardado.'
+                })
+              }
+              onDeleteDeliveryPoint={(pointId) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyDeleteDeliveryPoint(cur, pointId),
+                  cloudFn: () => cloudDeleteDeliveryPoint(pointId),
+                  successMsg: 'Punto de entrega eliminado.'
+                })
+              }
+              onSaveDeliverySlot={(payload) =>
+                commitMutation({
+                  optimisticFn: (cur) => applySaveDeliverySlot(cur, payload),
+                  cloudFn: (cur) => cloudSaveDeliverySlot(cur, payload),
+                  successMsg: 'Horario de entrega programado.'
+                })
+              }
+              onDeleteDeliverySlot={(slotId) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyDeleteDeliverySlot(cur, slotId),
+                  cloudFn: () => cloudDeleteDeliverySlot(slotId),
+                  successMsg: 'Horario de entrega eliminado.'
+                })
+              }
+              onUpdateStorefrontMerchandising={(payload) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyUpdateStorefrontMerchandising(cur, payload),
+                  cloudFn: () => cloudUpdateStorefrontMerchandising(payload),
+                  successMsg: 'Vitrina web actualizada.'
+                })
+              }
+              onUpdateYapeGateway={(payload) =>
+                commitMutation({
+                  optimisticFn: (cur) => ({
+                    ...cur,
+                    yapeGateway: { ...(cur.yapeGateway || {}), ...payload }
+                  }),
+                  cloudFn: () => cloudUpdateYapeGateway(payload),
+                  successMsg: 'Validador Yape actualizado.'
+                })
+              }
+              onSimulateYapeNotification={async (payload) => {
+                try {
+                  const res = await cloudSimulateOrRegisterYapePayment(payload);
+                  setDb(res.db);
+                  saveLocalDb(res.db);
+                  if (res.matchResult?.matched) {
+                    notify(`¡Yape validado y vinculado al pedido ${res.matchResult.matched_sale_code}!`);
+                  } else {
+                    notify('Notificación Yape registrada en el sistema.');
+                  }
+                } catch (err) {
+                  notify(err.message, true);
+                }
+              }}
+              onOpenPublicStorefront={() => setIsStaffPreviewActive(true)}
+              onNavigateToSales={() => setActiveTab('sales')}
             />
           )}
 

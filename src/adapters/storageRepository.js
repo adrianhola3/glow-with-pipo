@@ -38,7 +38,19 @@ function createEmptyDatabase() {
     combos: [],
     restocks: [],
     customers: [],
-    sales: []
+    sales: [],
+    deliveryPoints: [],
+    deliverySlots: [],
+    yapeGateway: {
+      id: 'primary',
+      isAwake: true,
+      lastHeartbeatAt: new Date().toISOString(),
+      batteryLevel: 95,
+      notificationsEnabled: true,
+      receiverPhone: '+51 948 254 832',
+      receiverName: 'Glow with Pipo'
+    },
+    yapeIncomingPayments: []
   };
 }
 
@@ -292,6 +304,11 @@ export function applyCreateProductWithInitialStock(db, payload) {
     comboRatio,
     comboPrice,
     hasVariants,
+    imageUrl: (payload.imageUrl || '').trim(),
+    galleryUrls: Array.isArray(payload.galleryUrls) ? payload.galleryUrls : [],
+    publicDescription: (payload.publicDescription || '').trim(),
+    isVisiblePublic: payload.isVisiblePublic !== false,
+    isFeatured: Boolean(payload.isFeatured),
     active: true,
     createdAt: new Date().toISOString()
   };
@@ -382,12 +399,17 @@ export function applyUpdateProduct(db, payload) {
 
   next.products[idx] = {
     ...next.products[idx],
-    name: payload.name.trim(),
-    brand: (payload.brand || '').trim(),
+    name: payload.name !== undefined ? payload.name.trim() : next.products[idx].name,
+    brand: payload.brand !== undefined ? (payload.brand || '').trim() : next.products[idx].brand,
     category: payload.category || next.products[idx].category,
-    unitPrice,
+    unitPrice: payload.unitPrice !== undefined ? unitPrice : next.products[idx].unitPrice,
     comboRatio,
-    comboPrice
+    comboPrice: payload.unitPrice !== undefined || payload.comboPrice !== undefined ? comboPrice : next.products[idx].comboPrice,
+    imageUrl: payload.imageUrl !== undefined ? String(payload.imageUrl || '').trim() : (next.products[idx].imageUrl || ''),
+    galleryUrls: Array.isArray(payload.galleryUrls) ? payload.galleryUrls : (next.products[idx].galleryUrls || []),
+    publicDescription: payload.publicDescription !== undefined ? String(payload.publicDescription || '').trim() : (next.products[idx].publicDescription || ''),
+    isVisiblePublic: payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : (next.products[idx].isVisiblePublic !== false),
+    isFeatured: payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : Boolean(next.products[idx].isFeatured)
   };
 
   if (Array.isArray(payload.variants)) {
@@ -504,11 +526,15 @@ export function applyCreateOrUpdateCombo(db, payload) {
     if (idx >= 0) {
       next.combos[idx] = {
         ...next.combos[idx],
-        code,
-        name: payload.name.trim(),
-        comboType,
-        description: (payload.description || '').trim(),
-        items: cleanItems
+        code: (payload.code || '').trim() || next.combos[idx].code,
+        name: payload.name !== undefined ? payload.name.trim() : next.combos[idx].name,
+        comboType: payload.comboType !== undefined ? comboType : (next.combos[idx].comboType || 'predefined'),
+        description: payload.description !== undefined ? (payload.description || '').trim() : next.combos[idx].description,
+        publicDescription: payload.publicDescription !== undefined ? String(payload.publicDescription || '').trim() : (next.combos[idx].publicDescription || ''),
+        imageUrl: payload.imageUrl !== undefined ? String(payload.imageUrl || '').trim() : (next.combos[idx].imageUrl || ''),
+        isVisiblePublic: payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : (next.combos[idx].isVisiblePublic !== false),
+        isFeatured: payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : Boolean(next.combos[idx].isFeatured),
+        items: payload.items !== undefined ? cleanItems : (next.combos[idx].items || [])
       };
       return next;
     }
@@ -520,6 +546,10 @@ export function applyCreateOrUpdateCombo(db, payload) {
     name: payload.name.trim(),
     comboType,
     description: (payload.description || '').trim(),
+    publicDescription: (payload.publicDescription || '').trim(),
+    imageUrl: (payload.imageUrl || '').trim(),
+    isVisiblePublic: payload.isVisiblePublic !== false,
+    isFeatured: Boolean(payload.isFeatured),
     active: true,
     items: cleanItems,
     createdAt: new Date().toISOString()
@@ -901,6 +931,119 @@ export function applyUpdateSaleStatus(db, saleId, nextStatus) {
   return next;
 }
 
+export function applySaveDeliveryPoint(db, payload) {
+  const next = structuredClone(db);
+  next.deliveryPoints = next.deliveryPoints || [];
+  const code = (payload.code || '').trim() || generateNextCode('PTO', next.deliveryPoints);
+  if (payload.id) {
+    const idx = next.deliveryPoints.findIndex((dp) => dp.id === payload.id);
+    if (idx >= 0) {
+      next.deliveryPoints[idx] = {
+        ...next.deliveryPoints[idx],
+        code,
+        name: payload.name.trim(),
+        zoneType: payload.zoneType || 'punto_especifico',
+        referenceInfo: (payload.referenceInfo || '').trim(),
+        active: payload.active !== false,
+        sortOrder: Math.trunc(toNumber(payload.sortOrder, next.deliveryPoints[idx].sortOrder || 0))
+      };
+      return next;
+    }
+  }
+  next.deliveryPoints.push({
+    id: payload.id || uid(),
+    code,
+    name: payload.name.trim(),
+    zoneType: payload.zoneType || 'punto_especifico',
+    referenceInfo: (payload.referenceInfo || '').trim(),
+    active: payload.active !== false,
+    sortOrder: Math.trunc(toNumber(payload.sortOrder, next.deliveryPoints.length + 1)),
+    createdAt: new Date().toISOString()
+  });
+  return next;
+}
+
+export function applyDeleteDeliveryPoint(db, pointId) {
+  const next = structuredClone(db);
+  next.deliveryPoints = (next.deliveryPoints || []).filter((dp) => dp.id !== pointId);
+  next.deliverySlots = (next.deliverySlots || []).filter((ds) => ds.deliveryPointId !== pointId);
+  return next;
+}
+
+export function applySaveDeliverySlot(db, payload) {
+  const next = structuredClone(db);
+  next.deliverySlots = next.deliverySlots || [];
+  if (payload.id) {
+    const idx = next.deliverySlots.findIndex((ds) => ds.id === payload.id);
+    if (idx >= 0) {
+      next.deliverySlots[idx] = {
+        ...next.deliverySlots[idx],
+        deliveryPointId: payload.deliveryPointId,
+        slotDate: payload.slotDate || '',
+        dayLabel: (payload.dayLabel || '').trim(),
+        timeRange: (payload.timeRange || '').trim(),
+        maxOrders: Math.max(1, Math.trunc(toNumber(payload.maxOrders, 10))),
+        active: payload.active !== false
+      };
+      return next;
+    }
+  }
+  next.deliverySlots.push({
+    id: payload.id || uid(),
+    deliveryPointId: payload.deliveryPointId,
+    slotDate: payload.slotDate || '',
+    dayLabel: (payload.dayLabel || '').trim(),
+    timeRange: (payload.timeRange || '').trim(),
+    maxOrders: Math.max(1, Math.trunc(toNumber(payload.maxOrders, 10))),
+    bookedOrders: 0,
+    active: payload.active !== false,
+    createdAt: new Date().toISOString()
+  });
+  return next;
+}
+
+export function applyDeleteDeliverySlot(db, slotId) {
+  const next = structuredClone(db);
+  next.deliverySlots = (next.deliverySlots || []).filter((ds) => ds.id !== slotId);
+  return next;
+}
+
+export function applyUpdateStorefrontMerchandising(db, payload) {
+  const next = structuredClone(db);
+  if (payload.entityType === 'combo') {
+    const idx = (next.combos || []).findIndex((c) => c.id === payload.id);
+    if (idx >= 0) {
+      next.combos[idx] = {
+        ...next.combos[idx],
+        imageUrl: payload.imageUrl !== undefined ? (payload.imageUrl || '').trim() : next.combos[idx].imageUrl,
+        publicDescription:
+          payload.publicDescription !== undefined
+            ? (payload.publicDescription || '').trim()
+            : next.combos[idx].publicDescription,
+        isVisiblePublic:
+          payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : next.combos[idx].isVisiblePublic,
+        isFeatured: payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : next.combos[idx].isFeatured
+      };
+    }
+  } else {
+    const idx = (next.products || []).findIndex((p) => p.id === payload.id);
+    if (idx >= 0) {
+      next.products[idx] = {
+        ...next.products[idx],
+        imageUrl: payload.imageUrl !== undefined ? (payload.imageUrl || '').trim() : next.products[idx].imageUrl,
+        publicDescription:
+          payload.publicDescription !== undefined
+            ? (payload.publicDescription || '').trim()
+            : next.products[idx].publicDescription,
+        isVisiblePublic:
+          payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : next.products[idx].isVisiblePublic,
+        isFeatured: payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : next.products[idx].isFeatured
+      };
+    }
+  }
+  return next;
+}
+
 // ============================================================================
 // Authentication & Live Realtime Subscription
 // ============================================================================
@@ -1112,7 +1255,11 @@ export async function fetchSupabaseDatabase() {
     salesRes,
     saleItemsRes,
     saleSuppliesRes,
-    salePaymentsRes
+    salePaymentsRes,
+    deliveryPointsRes,
+    deliverySlotsRes,
+    yapeGatewayRes,
+    yapeIncomingRes
   ] = await Promise.all([
     client
       .from('product_categories')
@@ -1131,7 +1278,11 @@ export async function fetchSupabaseDatabase() {
     client.from('sales').select('*').order('created_at', { ascending: false }),
     client.from('sale_items').select('*'),
     client.from('sale_supplies').select('*'),
-    client.from('sale_payments').select('*').order('payment_date', { ascending: true })
+    client.from('sale_payments').select('*').order('payment_date', { ascending: true }),
+    client.from('delivery_points').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+    client.from('delivery_slots').select('*').order('slot_date', { ascending: true }).order('created_at', { ascending: true }),
+    client.from('yape_gateway_status').select('*').eq('id', 'primary').maybeSingle(),
+    client.from('yape_incoming_payments').select('*').order('received_at', { ascending: false }).limit(50)
   ]);
 
   const firstErr = [
@@ -1268,6 +1419,11 @@ export async function fetchSupabaseDatabase() {
       comboRatio: Number(p.combo_ratio),
       comboPrice: Number(p.combo_price),
       hasVariants: p.has_variants,
+      imageUrl: p.image_url || '',
+      galleryUrls: Array.isArray(p.gallery_urls) ? p.gallery_urls : [],
+      publicDescription: p.public_description || '',
+      isVisiblePublic: p.is_visible_public !== false,
+      isFeatured: Boolean(p.is_featured),
       active: p.active,
       createdAt: p.created_at
     })),
@@ -1295,6 +1451,10 @@ export async function fetchSupabaseDatabase() {
       name: c.name,
       comboType: c.combo_type || 'predefined',
       description: c.description || '',
+      publicDescription: c.public_description || '',
+      imageUrl: c.image_url || '',
+      isVisiblePublic: c.is_visible_public !== false,
+      isFeatured: Boolean(c.is_featured),
       active: c.active,
       items: comboItemsByCombo.get(c.id) || [],
       createdAt: c.created_at
@@ -1341,10 +1501,67 @@ export async function fetchSupabaseDatabase() {
       balanceDue: Number(s.balance_due),
       notes: s.notes || '',
       createdBy: s.created_by || '',
+      orderSource: s.order_source || 'erp',
+      yapeHolderName: s.yape_holder_name || '',
+      paymentVerificationStatus: s.payment_verification_status || 'manual',
+      deliveryPointId: s.delivery_point_id || null,
+      deliverySlotId: s.delivery_slot_id || null,
       items: saleItemsBySale.get(s.id) || [],
       suppliesUsed: saleSuppliesBySale.get(s.id) || [],
       payments: salePaymentsBySale.get(s.id) || [],
       createdAt: s.created_at
+    })),
+    deliveryPoints: (deliveryPointsRes?.data || []).map((dp) => ({
+      id: dp.id,
+      code: dp.code,
+      name: dp.name,
+      zoneType: dp.zone_type || 'punto_especifico',
+      referenceInfo: dp.reference_info || '',
+      active: dp.active !== false,
+      sortOrder: dp.sort_order || 0,
+      createdAt: dp.created_at
+    })),
+    deliverySlots: (deliverySlotsRes?.data || []).map((ds) => ({
+      id: ds.id,
+      deliveryPointId: ds.delivery_point_id,
+      slotDate: ds.slot_date || '',
+      dayLabel: ds.day_label || '',
+      timeRange: ds.time_range || '',
+      maxOrders: ds.max_orders || 10,
+      bookedOrders: ds.booked_orders || 0,
+      active: ds.active !== false,
+      createdAt: ds.created_at
+    })),
+    yapeGateway: yapeGatewayRes?.data
+      ? {
+          id: yapeGatewayRes.data.id,
+          isAwake: yapeGatewayRes.data.is_awake !== false,
+          wakeRequestedAt: yapeGatewayRes.data.wake_requested_at || null,
+          lastHeartbeatAt: yapeGatewayRes.data.last_heartbeat_at || null,
+          batteryLevel: yapeGatewayRes.data.battery_level ?? 95,
+          notificationsEnabled: yapeGatewayRes.data.notifications_enabled !== false,
+          receiverPhone: yapeGatewayRes.data.receiver_phone || '+51 948 254 832',
+          receiverName: yapeGatewayRes.data.receiver_name || 'Glow with Pipo'
+        }
+      : {
+          id: 'primary',
+          isAwake: true,
+          lastHeartbeatAt: new Date().toISOString(),
+          batteryLevel: 95,
+          notificationsEnabled: true,
+          receiverPhone: '+51 948 254 832',
+          receiverName: 'Glow with Pipo'
+        },
+    yapeIncomingPayments: (yapeIncomingRes?.data || []).map((yip) => ({
+      id: yip.id,
+      senderFullName: yip.sender_full_name,
+      normalizedSenderName: yip.normalized_sender_name,
+      amount: Number(yip.amount),
+      operationCode: yip.operation_code || '',
+      rawNotificationText: yip.raw_notification_text || '',
+      receivedAt: yip.received_at,
+      consumed: Boolean(yip.consumed),
+      matchedSaleId: yip.matched_sale_id || null
     }))
   };
 }
@@ -1441,6 +1658,11 @@ export async function cloudCreateProductWithInitialStock(currentDb, payload) {
     combo_ratio: comboRatio,
     combo_price: comboPrice,
     has_variants: hasVariants,
+    image_url: (payload.imageUrl || '').trim(),
+    gallery_urls: Array.isArray(payload.galleryUrls) ? payload.galleryUrls : [],
+    public_description: (payload.publicDescription || '').trim(),
+    is_visible_public: payload.isVisiblePublic !== false,
+    is_featured: Boolean(payload.isFeatured),
     active: true
   });
   if (prodErr) throw new Error(`Error al crear producto: ${prodErr.message}`);
@@ -1557,7 +1779,17 @@ export async function cloudUpdateProduct(currentDb, payload) {
       unit_price: unitPrice,
       combo_ratio: comboRatio,
       combo_price: comboPrice,
-      has_variants: hasVariants
+      has_variants: hasVariants,
+      image_url: payload.imageUrl !== undefined ? (payload.imageUrl || '').trim() : (existingProd?.imageUrl || ''),
+      gallery_urls: Array.isArray(payload.galleryUrls) ? payload.galleryUrls : (existingProd?.galleryUrls || []),
+      public_description:
+        payload.publicDescription !== undefined
+          ? (payload.publicDescription || '').trim()
+          : (existingProd?.publicDescription || ''),
+      is_visible_public:
+        payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : (existingProd?.isVisiblePublic !== false),
+      is_featured:
+        payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : Boolean(existingProd?.isFeatured)
     })
     .eq('id', payload.id);
 
@@ -1660,13 +1892,26 @@ export async function cloudSaveCombo(currentDb, payload) {
   const comboType = payload.comboType === 'customizable' ? 'customizable' : 'predefined';
 
   if (payload.id) {
+    const existingCombo = currentDb.combos.find((c) => c.id === payload.id);
     const { error } = await client
       .from('combos')
       .update({
         code,
         name: payload.name.trim(),
         combo_type: comboType,
-        description: (payload.description || '').trim()
+        description: (payload.description || '').trim(),
+        public_description:
+          payload.publicDescription !== undefined
+            ? (payload.publicDescription || '').trim()
+            : (existingCombo?.publicDescription || ''),
+        image_url:
+          payload.imageUrl !== undefined ? (payload.imageUrl || '').trim() : (existingCombo?.imageUrl || ''),
+        is_visible_public:
+          payload.isVisiblePublic !== undefined
+            ? Boolean(payload.isVisiblePublic)
+            : (existingCombo?.isVisiblePublic !== false),
+        is_featured:
+          payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : Boolean(existingCombo?.isFeatured)
       })
       .eq('id', comboId);
     if (error) throw new Error(`Error al actualizar combo: ${error.message}`);
@@ -1678,6 +1923,10 @@ export async function cloudSaveCombo(currentDb, payload) {
       name: payload.name.trim(),
       combo_type: comboType,
       description: (payload.description || '').trim(),
+      public_description: (payload.publicDescription || payload.description || '').trim(),
+      image_url: (payload.imageUrl || '').trim(),
+      is_visible_public: payload.isVisiblePublic !== false,
+      is_featured: Boolean(payload.isFeatured),
       active: true
     });
     if (error) throw new Error(`Error al crear combo: ${error.message}`);
@@ -2461,3 +2710,247 @@ export async function syncStateToSupabase(db) {
     }
   }
 }
+
+// ============================================================================
+// 9. Storefront Curation, Delivery Points/Slots & Yape Gateway Cloud Mutations
+// ============================================================================
+
+export async function cloudSaveDeliveryPoint(currentDb, payload) {
+  const client = getSupabaseClient();
+  const code = (payload.code || '').trim() || generateNextCode('PTO', currentDb.deliveryPoints || []);
+  const row = {
+    code,
+    name: payload.name.trim(),
+    zone_type: payload.zoneType || 'punto_especifico',
+    reference_info: (payload.referenceInfo || '').trim(),
+    active: payload.active !== false,
+    sort_order: Math.trunc(toNumber(payload.sortOrder, (currentDb.deliveryPoints || []).length + 1))
+  };
+
+  if (payload.id) {
+    const { error } = await client.from('delivery_points').update(row).eq('id', payload.id);
+    if (error) throw new Error(`Error al actualizar punto de entrega: ${error.message}`);
+  } else {
+    const { error } = await client.from('delivery_points').insert({ id: uid(), ...row });
+    if (error) throw new Error(`Error al crear punto de entrega: ${error.message}`);
+  }
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudDeleteDeliveryPoint(pointId) {
+  const client = getSupabaseClient();
+  const { error } = await client.from('delivery_points').delete().eq('id', pointId);
+  if (error) throw new Error(`Error al eliminar punto de entrega: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudSaveDeliverySlot(_currentDb, payload) {
+  const client = getSupabaseClient();
+  const row = {
+    delivery_point_id: payload.deliveryPointId,
+    slot_date: payload.slotDate || null,
+    day_label: (payload.dayLabel || '').trim(),
+    time_range: (payload.timeRange || '').trim(),
+    max_orders: Math.max(1, Math.trunc(toNumber(payload.maxOrders, 10))),
+    active: payload.active !== false
+  };
+
+  if (payload.id) {
+    const { error } = await client.from('delivery_slots').update(row).eq('id', payload.id);
+    if (error) throw new Error(`Error al actualizar horario de entrega: ${error.message}`);
+  } else {
+    const { error } = await client.from('delivery_slots').insert({ id: uid(), ...row });
+    if (error) throw new Error(`Error al crear horario de entrega: ${error.message}`);
+  }
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudDeleteDeliverySlot(slotId) {
+  const client = getSupabaseClient();
+  const { error } = await client.from('delivery_slots').delete().eq('id', slotId);
+  if (error) throw new Error(`Error al eliminar horario de entrega: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudUpdateStorefrontMerchandising(payload) {
+  const client = getSupabaseClient();
+  const table = payload.entityType === 'combo' ? 'combos' : 'products';
+  const updateObj = {};
+  if (payload.imageUrl !== undefined) updateObj.image_url = (payload.imageUrl || '').trim();
+  if (payload.publicDescription !== undefined) {
+    updateObj.public_description = (payload.publicDescription || '').trim();
+  }
+  if (payload.isVisiblePublic !== undefined) {
+    updateObj.is_visible_public = Boolean(payload.isVisiblePublic);
+  }
+  if (payload.isFeatured !== undefined) {
+    updateObj.is_featured = Boolean(payload.isFeatured);
+  }
+
+  const { error } = await client.from(table).update(updateObj).eq('id', payload.id);
+  if (error) throw new Error(`Error al personalizar vitrina web: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudUpdateYapeGateway(payload) {
+  const client = getSupabaseClient();
+  const updateObj = {
+    last_heartbeat_at: new Date().toISOString()
+  };
+  if (payload.isAwake !== undefined) updateObj.is_awake = Boolean(payload.isAwake);
+  if (payload.batteryLevel !== undefined) updateObj.battery_level = Math.trunc(toNumber(payload.batteryLevel, 95));
+  if (payload.notificationsEnabled !== undefined) {
+    updateObj.notifications_enabled = Boolean(payload.notificationsEnabled);
+  }
+  if (payload.receiverPhone !== undefined) updateObj.receiver_phone = (payload.receiverPhone || '').trim();
+  if (payload.receiverName !== undefined) updateObj.receiver_name = (payload.receiverName || '').trim();
+
+  const { error } = await client.from('yape_gateway_status').update(updateObj).eq('id', 'primary');
+  if (error) throw new Error(`Error al actualizar estado del validador Yape: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudSimulateOrRegisterYapePayment({
+  senderName,
+  amount,
+  operationCode = '',
+  rawText = ''
+}) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no disponible.');
+  const { data, error } = await client.rpc('register_incoming_yape_notification', {
+    p_sender_full_name: (senderName || '').trim(),
+    p_amount: roundMoney(amount),
+    p_operation_code: (operationCode || '').trim(),
+    p_raw_text: (rawText || `Yape! ${(senderName || '').trim()} te envió un pago por S/ ${roundMoney(amount)}`).trim()
+  });
+  if (error) throw new Error(`Error al registrar notificación Yape: ${error.message}`);
+  const freshDb = await fetchSupabaseDatabase();
+  return { db: freshDb, matchResult: data };
+}
+
+// ============================================================================
+// 10. Public Storefront Customer RPCs (Zero-Login Anonymous Access)
+// ============================================================================
+
+export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const { data, error } = await client.rpc('get_public_storefront_catalog');
+      if (!error && data) {
+        return data;
+      }
+    } catch {
+      // Fallback to local snapshot if offline
+    }
+  }
+
+  const source = fallbackDb || loadLocalDb();
+  return {
+    categories: source.categories || [...PRODUCT_CATEGORIES],
+    products: (source.products || [])
+      .filter((p) => p.active !== false && p.isVisiblePublic !== false)
+      .map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        brand: p.brand || '',
+        category: p.category,
+        unitPrice: p.unitPrice,
+        comboRatio: p.comboRatio,
+        comboPrice: p.comboPrice,
+        hasVariants: p.hasVariants,
+        imageUrl: p.imageUrl || '',
+        galleryUrls: p.galleryUrls || [],
+        publicDescription: p.publicDescription || '',
+        isFeatured: Boolean(p.isFeatured),
+        variants: (source.variants || [])
+          .filter((v) => v.productId === p.id)
+          .map((v) => ({
+            id: v.id,
+            productId: v.productId,
+            sku: v.sku,
+            shadeName: v.shadeName,
+            colorHex: v.colorHex,
+            stock: v.stock
+          }))
+      })),
+    combos: (source.combos || [])
+      .filter((c) => c.active !== false && c.isVisiblePublic !== false)
+      .map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        comboType: c.comboType || 'predefined',
+        description: c.description || '',
+        publicDescription: c.publicDescription || '',
+        imageUrl: c.imageUrl || '',
+        isFeatured: Boolean(c.isFeatured),
+        items: c.items || []
+      })),
+    deliveryPoints: (source.deliveryPoints || []).filter((dp) => dp.active !== false),
+    deliverySlots: (source.deliverySlots || []).filter(
+      (ds) => ds.active !== false && (ds.bookedOrders || 0) < (ds.maxOrders || 10)
+    ),
+    yapeGateway: source.yapeGateway || {
+      isAwake: true,
+      lastHeartbeatAt: new Date().toISOString(),
+      batteryLevel: 95,
+      notificationsEnabled: true,
+      receiverPhone: '+51 948 254 832',
+      receiverName: 'Glow with Pipo'
+    }
+  };
+}
+
+export async function wakeAndCheckYapeGateway() {
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      isAwake: true,
+      isOnline: true,
+      batteryLevel: 95,
+      notificationsEnabled: true,
+      receiverPhone: '+51 948 254 832',
+      receiverName: 'Glow with Pipo',
+      checkedAt: new Date().toISOString()
+    };
+  }
+  const { data, error } = await client.rpc('wake_and_check_yape_gateway');
+  if (error) {
+    return {
+      isAwake: true,
+      isOnline: true,
+      batteryLevel: 95,
+      notificationsEnabled: true,
+      receiverPhone: '+51 948 254 832',
+      receiverName: 'Glow with Pipo',
+      checkedAt: new Date().toISOString()
+    };
+  }
+  return data;
+}
+
+export async function submitWebStorefrontOrder(payload) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('No hay conexión con el servidor de pedidos.');
+  const { data, error } = await client.rpc('create_web_storefront_order', {
+    payload
+  });
+  if (error) {
+    throw new Error(error.message || 'No se pudo registrar el pedido.');
+  }
+  return data;
+}
+
+export async function checkWebOrderYapeStatus(saleId) {
+  const client = getSupabaseClient();
+  if (!client || !saleId) return { verified: false, status: 'pending_yape_verification' };
+  const { data, error } = await client.rpc('check_web_order_yape_status', {
+    target_sale_id: saleId
+  });
+  if (error) return { verified: false, status: 'pending_yape_verification' };
+  return data;
+}
+

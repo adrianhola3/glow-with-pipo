@@ -40,7 +40,10 @@ const TABLES = [
   'sales',
   'sale_items',
   'sale_supplies',
-  'sale_payments'
+  'sale_payments',
+  'delivery_points',
+  'delivery_slots',
+  'yape_gateway_status'
 ];
 
 async function runBackup() {

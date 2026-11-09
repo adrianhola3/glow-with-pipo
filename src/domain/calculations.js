@@ -20,6 +20,8 @@ export function formatCurrency(value) {
   return `S/ ${safe.toFixed(2)}`;
 }
 
+export const formatMoney = formatCurrency;
+
 export function formatUnitCost(value) {
   const safe = roundUnitCost(value);
   const twoDec = Math.round(safe * 100) / 100;

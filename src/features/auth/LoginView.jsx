@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Lock, Sparkles, UserCheck } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Lock, Sparkles, Store, UserCheck } from 'lucide-react';
 import { signInApp } from '../../adapters/storageRepository.js';
 
-export default function LoginView({ onLoggedIn }) {
+export default function LoginView({ onLoggedIn, onBackToStorefront }) {
   const [selectedUser, setSelectedUser] = useState('adrian'); // 'adrian' | 'fabiana'
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -140,6 +140,17 @@ export default function LoginView({ onLoggedIn }) {
               <Lock size={16} />
               {loading ? 'Verificando con Supabase...' : `Ingresar como ${activeOwner.name}`}
             </button>
+
+            {onBackToStorefront && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onBackToStorefront}
+                style={{ justifyContent: 'center' }}
+              >
+                <Store size={16} /> Ver Tienda Pública de Clientes
+              </button>
+            )}
           </form>
 
           <div

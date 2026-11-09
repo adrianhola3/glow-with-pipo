@@ -24,6 +24,11 @@ import {
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
+  applySaveDeliveryPoint,
+  applyDeleteDeliveryPoint,
+  applySaveDeliverySlot,
+  applyDeleteDeliverySlot,
+  applyUpdateStorefrontMerchandising,
   applyUpdateProduct,
   applyUpdateSaleStatus,
   listAutoSnapshots,
@@ -534,6 +539,72 @@ test('Custom product categories can be freely added and removed', () => {
   db = applyDeleteCategory(db, 'Rubor');
   assert.ok(!db.categories.includes('Rubor'));
 });
+
+test('Delivery points and availability slots can be scheduled, updated, and deleted', () => {
+  let db = emptyState();
+  db.deliveryPoints = [];
+  db.deliverySlots = [];
+
+  // Add a meeting point (UNAC)
+  db = applySaveDeliveryPoint(db, {
+    name: 'UNAC — Puerta Principal',
+    zoneType: 'universidad',
+    referenceInfo: 'Frente a FCA'
+  });
+  assert.equal(db.deliveryPoints.length, 1);
+  const point = db.deliveryPoints[0];
+  assert.equal(point.name, 'UNAC — Puerta Principal');
+  assert.equal(point.active, true);
+
+  // Add a scheduled time slot
+  db = applySaveDeliverySlot(db, {
+    deliveryPointId: point.id,
+    dayLabel: 'Jueves 12 Nov',
+    timeRange: '1:00 PM - 2:30 PM',
+    maxOrders: 15
+  });
+  assert.equal(db.deliverySlots.length, 1);
+  const slot = db.deliverySlots[0];
+  assert.equal(slot.dayLabel, 'Jueves 12 Nov');
+  assert.equal(slot.maxOrders, 15);
+
+  // Deleting point also cascades and removes related slots
+  db = applyDeleteDeliveryPoint(db, point.id);
+  assert.equal(db.deliveryPoints.length, 0);
+  assert.equal(db.deliverySlots.length, 0);
+});
+
+test('Storefront visual merchandising updates photos, descriptions, visibility and featured flags', () => {
+  let db = emptyState();
+
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Brillo Labial Fresa',
+    brand: 'Glow Pipo',
+    category: 'Labios',
+    unitPrice: 15.0,
+    unitCost: 7.0,
+    initialStock: 10,
+    hasVariants: false
+  });
+
+  const product = db.products[0];
+  assert.equal(product.isVisiblePublic, true, 'Products created in stock are visible on storefront by default');
+
+  db = applyUpdateStorefrontMerchandising(db, {
+    entityType: 'product',
+    id: product.id,
+    imageUrl: 'https://example.com/fresa.jpg',
+    publicDescription: 'Aroma dulce a fresas silvestres y acabado espejo.',
+    isVisiblePublic: true,
+    isFeatured: true
+  });
+
+  const updated = db.products[0];
+  assert.equal(updated.imageUrl, 'https://example.com/fresa.jpg');
+  assert.equal(updated.publicDescription, 'Aroma dulce a fresas silvestres y acabado espejo.');
+  assert.equal(updated.isFeatured, true);
+});
+
 
 
 
