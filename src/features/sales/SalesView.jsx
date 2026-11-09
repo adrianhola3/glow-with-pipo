@@ -13,7 +13,8 @@ import {
   Trash2,
   UserPlus,
   Users,
-  XCircle
+  XCircle,
+  Zap
 } from 'lucide-react';
 import {
   computeMargins,
@@ -67,6 +68,7 @@ export default function SalesView({
   currentUser,
   onCreateSale,
   onAddPayment,
+  onUpdateSalePrice,
   onChangeSaleStatus,
   onDeleteSale,
   onSaveCustomer,
@@ -108,6 +110,12 @@ export default function SalesView({
   const [payAmt, setPayAmt] = useState('');
   const [payMethod, setPayMethod] = useState('yape');
   const [payMarkDelivered, setPayMarkDelivered] = useState(true);
+  const [payAdjustTotal, setPayAdjustTotal] = useState(false);
+
+  // Edit Sale Price Modal
+  const [editingPriceSale, setEditingPriceSale] = useState(null);
+  const [editPriceVal, setEditPriceVal] = useState('');
+  const [editPriceNotes, setEditPriceNotes] = useState('');
 
   // Voluntary Customer Directory Form
   const [dirId, setDirId] = useState(null);
@@ -1303,8 +1311,23 @@ export default function SalesView({
                       </div>
 
                       <div className="order-header-totals">
-                        <div style={{ fontSize: '1.08rem', fontWeight: 800, color: 'var(--pipo-burgundy)' }}>
-                          Total venta: {formatCurrency(sale.totalCharged)}
+                        <div style={{ fontSize: '1.08rem', fontWeight: 800, color: 'var(--pipo-burgundy)', display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          <span>Total venta: {formatCurrency(sale.totalCharged)}</span>
+                          {onUpdateSalePrice && sale.status !== 'cancelled' && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: '2px 8px', fontSize: '0.74rem', height: 'auto', background: 'var(--pipo-ivory)', border: '1px solid var(--pipo-border)' }}
+                              title="Modificar precio final del pedido"
+                              onClick={() => {
+                                setEditingPriceSale(sale);
+                                setEditPriceVal(String(sale.totalCharged));
+                                setEditPriceNotes(sale.notes || '');
+                              }}
+                            >
+                              ✏️ Modificar Precio
+                            </button>
+                          )}
                         </div>
                         <div style={{ fontSize: '0.82rem', color: 'var(--status-ok-fg)', fontWeight: 700 }}>
                           Costo venta: {formatCurrency(roundMoney(sale.productsCost + sale.suppliesCost))} · Ganancia neta: {formatCurrency(sale.netProfit)}
@@ -1376,7 +1399,37 @@ export default function SalesView({
                         </a>
                       )}
 
-                      {sale.status !== 'cancelled' && sale.balanceDue > 0 && (
+                      {/* Botón principal rápido si está pendiente de entrega y cobro */}
+                      {sale.status === 'pending_delivery' && sale.balanceDue > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          style={{ fontWeight: 700 }}
+                          onClick={() => {
+                            setPayingSale(sale);
+                            setPayAmt(String(sale.balanceDue));
+                            setPayMethod((sale.notes || '').toLowerCase().includes('efectivo') ? 'efectivo' : 'yape');
+                            setPayMarkDelivered(true);
+                            setPayAdjustTotal(false);
+                          }}
+                        >
+                          <Zap size={14} /> Entregar y Cobrar ({formatCurrency(sale.balanceDue)})
+                        </button>
+                      )}
+
+                      {/* Si está pendiente pero ya estaba 100% pagado */}
+                      {sale.status === 'pending_delivery' && sale.balanceDue <= 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => onChangeSaleStatus(sale.id, 'delivered')}
+                        >
+                          <CheckCircle2 size={14} /> Marcar Entregado
+                        </button>
+                      )}
+
+                      {/* Si ya fue entregado pero quedó saldo pendiente */}
+                      {sale.status === 'delivered' && sale.balanceDue > 0 && (
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
@@ -1384,20 +1437,11 @@ export default function SalesView({
                             setPayingSale(sale);
                             setPayAmt(String(sale.balanceDue));
                             setPayMethod('yape');
-                            setPayMarkDelivered(sale.status === 'pending_delivery');
+                            setPayMarkDelivered(false);
+                            setPayAdjustTotal(false);
                           }}
                         >
-                          <CreditCard size={14} /> Registrar Pago / Saldo
-                        </button>
-                      )}
-
-                      {sale.status === 'pending_delivery' && (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          onClick={() => onChangeSaleStatus(sale.id, 'delivered')}
-                        >
-                          <CheckCircle2 size={14} /> Marcar Entregado
+                          <CreditCard size={14} /> Cobrar Saldo ({formatCurrency(sale.balanceDue)})
                         </button>
                       )}
 
@@ -1641,37 +1685,72 @@ export default function SalesView({
       {/* ==================== MODAL: REGISTER PAYMENT ==================== */}
       {payingSale && (
         <div className="modal-backdrop" onClick={() => setPayingSale(null)}>
-          <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
-            <h3 className="card-title">Registrar Pago — {payingSale.code}</h3>
-            <p style={{ fontSize: '0.86rem', color: 'var(--pipo-muted)', marginTop: 0 }}>
-              Saldo pendiente actual: <strong>{formatCurrency(payingSale.balanceDue)}</strong>
-            </p>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <h3 className="card-title">
+              {payingSale.status === 'pending_delivery' ? '⚡ Entregar y Cobrar Pedido' : 'Registrar Pago / Saldo'} — {payingSale.code}
+            </h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--pipo-ivory)', borderRadius: 12, margin: '8px 0 14px', fontSize: '0.86rem', border: '1px solid var(--pipo-border)' }}>
+              <div>Total pedido: <strong>{formatCurrency(payingSale.totalCharged)}</strong></div>
+              <div>Ya pagó: <strong style={{ color: 'var(--status-ok-fg)' }}>{formatCurrency(payingSale.amountPaid)}</strong></div>
+              <div>Saldo actual: <strong style={{ color: payingSale.balanceDue > 0 ? '#9b1c1c' : 'var(--status-ok-fg)' }}>{formatCurrency(payingSale.balanceDue)}</strong></div>
+            </div>
+
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
                 await onAddPayment(payingSale.id, {
                   amount: toNumber(payAmt, 0),
                   method: payMethod,
-                  markDelivered: payMarkDelivered
+                  markDelivered: payMarkDelivered,
+                  adjustTotalCharged: payAdjustTotal
                 });
                 setPayingSale(null);
               }}
               style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
             >
               <div className="field">
-                <label>Monto recibido (S/) *</label>
+                <label>Monto que paga el cliente hoy (S/) *</label>
                 <input
                   type="number"
-                  min="0.1"
+                  min="0.01"
                   step="0.01"
                   required
                   value={payAmt}
-                  onChange={(e) => setPayAmt(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPayAmt(val);
+                    if (val && toNumber(val, 0) !== payingSale.balanceDue) {
+                      setPayAdjustTotal(true);
+                    } else {
+                      setPayAdjustTotal(false);
+                    }
+                  }}
                 />
               </div>
 
+              {toNumber(payAmt, 0) !== payingSale.balanceDue && toNumber(payAmt, 0) > 0 && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 10, padding: 10, fontSize: '0.84rem', color: '#92400e' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={payAdjustTotal}
+                      onChange={(e) => setPayAdjustTotal(e.target.checked)}
+                      style={{ width: 17, height: 17, marginTop: 2 }}
+                    />
+                    <span>
+                      <strong>Ajustar precio final a {formatCurrency(roundMoney(toNumber(payAmt, 0) + payingSale.amountPaid))}:</strong> liquidar venta al 100% con este pago (saldo quedará en S/ 0.00 y la ganancia se recalcula).
+                    </span>
+                  </label>
+                  {!payAdjustTotal && (
+                    <div style={{ marginTop: 6, fontSize: '0.78rem', color: '#b45309' }}>
+                      ℹ️ Modo abono parcial: el precio original se mantiene y quedará un saldo de {formatCurrency(roundMoney(Math.max(0, payingSale.balanceDue - toNumber(payAmt, 0))))}.
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="field">
-                <label>Método de pago</label>
+                <label>Método con el que pagó</label>
                 <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
                   {PAYMENT_METHODS.map((pm) => (
                     <option key={pm.id} value={pm.id}>
@@ -1682,23 +1761,81 @@ export default function SalesView({
               </div>
 
               {payingSale.status === 'pending_delivery' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.86rem', fontWeight: 700 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.88rem', fontWeight: 700, padding: '4px 0' }}>
                   <input
                     type="checkbox"
                     checked={payMarkDelivered}
                     onChange={(e) => setPayMarkDelivered(e.target.checked)}
-                    style={{ width: 17, height: 17 }}
+                    style={{ width: 18, height: 18 }}
                   />
-                  Marcar también este pedido como Entregado
+                  <span>✓ Marcar también este pedido como Entregado</span>
                 </label>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                 <button type="button" className="btn btn-ghost" onClick={() => setPayingSale(null)}>
                   Cancelar
                 </button>
                 <button type="submit" className="btn btn-primary">
-                  Guardar Pago
+                  {payMarkDelivered ? 'Guardar y Liquidar Pedido' : 'Guardar Pago'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: EDIT SALE PRICE ==================== */}
+      {editingPriceSale && (
+        <div className="modal-backdrop" onClick={() => setEditingPriceSale(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <h3 className="card-title">✏️ Modificar Precio Final — {editingPriceSale.code}</h3>
+            <p style={{ fontSize: '0.86rem', color: 'var(--pipo-muted)', margin: '4px 0 12px' }}>
+              Cliente: <strong>{customersMap.get(editingPriceSale.customerId)?.name || 'Cliente'}</strong> · Total actual: {formatCurrency(editingPriceSale.totalCharged)}
+            </p>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (onUpdateSalePrice) {
+                  await onUpdateSalePrice(
+                    editingPriceSale.id,
+                    toNumber(editPriceVal, editingPriceSale.totalCharged),
+                    editPriceNotes
+                  );
+                }
+                setEditingPriceSale(null);
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+            >
+              <div className="field">
+                <label>Nuevo precio final total (S/) *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={editPriceVal}
+                  onChange={(e) => setEditPriceVal(e.target.value)}
+                />
+              </div>
+
+              <div className="field">
+                <label>Notas / Motivo del cambio (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Descuento acordado / Pago redondo"
+                  value={editPriceNotes}
+                  onChange={(e) => setEditPriceNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                <button type="button" className="btn btn-ghost" onClick={() => setEditingPriceSale(null)}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Actualizar Precio
                 </button>
               </div>
             </form>

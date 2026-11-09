@@ -30,6 +30,7 @@ import {
   applyDeleteDeliverySlot,
   applyUpdateStorefrontMerchandising,
   applyUpdateProduct,
+  applyUpdateSalePrice,
   applyUpdateSaleStatus,
   listAutoSnapshots,
   restoreAutoSnapshot,
@@ -264,6 +265,55 @@ test('Sale supports combo item substitution, custom sale price, absorbed bag cos
   assert.equal(db.variants[0].stock, 10);
   assert.equal(db.variants[2].stock, 5);
   assert.equal(db.supplies[0].stock, 25);
+});
+
+test('Modificación de precio de venta a última hora y liquidación total al entregar', () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Labial Velvet',
+    category: 'Labios',
+    unitCost: 5,
+    unitPrice: 12,
+    initialStock: 10
+  });
+  const variantId = db.variants[0].id;
+  const custRes = applyCreateOrUpdateCustomer(db, { name: 'Cliente A' });
+  db = custRes.db;
+  const custId = custRes.customer.id;
+
+  // Creamos pedido de 2 unidades = S/ 24.00, pendiente de entrega
+  db = applyCreateSale(db, {
+    customerId: custId,
+    items: [{ variantId, quantity: 2, appliedUnitPrice: 12 }],
+    shippingCharged: 0,
+    status: 'pending_delivery'
+  });
+
+  const sale = db.sales[0];
+  assert.equal(sale.totalCharged, 24);
+  assert.equal(sale.balanceDue, 24);
+  assert.equal(sale.netProfit, 14); // 24 - 10 = 14
+
+  // Caso 1: El cliente paga un monto menor acordado a última hora (S/ 20) y se liquida al 100%
+  db = applyAddSalePayment(db, sale.id, {
+    amount: 20,
+    method: 'efectivo',
+    markDelivered: true,
+    adjustTotalCharged: true
+  });
+
+  assert.equal(db.sales[0].totalCharged, 20, 'El precio total debió ajustarse al pago');
+  assert.equal(db.sales[0].amountPaid, 20);
+  assert.equal(db.sales[0].balanceDue, 0, 'No debe quedar saldo pendiente');
+  assert.equal(db.sales[0].status, 'delivered', 'Debe quedar como entregado');
+  assert.equal(db.sales[0].netProfit, 10, 'Ganancia neta debe recalcularse a 20 - 10 = 10');
+
+  // Caso 2: Modificación directa de precio con applyUpdateSalePrice
+  db = applyUpdateSalePrice(db, sale.id, 22, 'Ajuste posterior');
+  assert.equal(db.sales[0].totalCharged, 22);
+  assert.equal(db.sales[0].netProfit, 12);
+  assert.equal(db.sales[0].balanceDue, 2, 'Debe reflejar saldo restante si el nuevo total supera lo pagado');
+  assert.equal(db.sales[0].notes, 'Ajuste posterior');
 });
 
 test('Safe deletion helpers remove entities and enforce relational constraints', () => {

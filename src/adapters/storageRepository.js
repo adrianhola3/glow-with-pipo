@@ -906,20 +906,66 @@ export function applyAddSalePayment(db, saleId, paymentPayload) {
     note: (paymentPayload.note || '').trim()
   });
 
+  const totalPaid = roundMoney(
+    sale.payments.reduce((acc, p) => acc + Number(p.amount), 0)
+  );
+
+  let targetTotalCharged = sale.totalCharged;
+  if (paymentPayload.adjustTotalCharged) {
+    targetTotalCharged = totalPaid;
+  } else if (
+    paymentPayload.newTotalCharged !== undefined &&
+    paymentPayload.newTotalCharged !== null &&
+    paymentPayload.newTotalCharged !== ''
+  ) {
+    targetTotalCharged = roundMoney(paymentPayload.newTotalCharged);
+  }
+
   const recalc = computeSaleTotals({
     items: sale.items,
     suppliesUsed: sale.suppliesUsed,
     shippingCharged: sale.shippingCharged,
     shippingCost: sale.shippingCost,
-    customTotalCharged: sale.totalCharged,
+    customTotalCharged: targetTotalCharged,
     payments: sale.payments
   });
 
+  sale.totalCharged = recalc.totalCharged;
+  sale.productsRevenue = recalc.productsRevenue;
+  sale.netProfit = recalc.netProfit;
   sale.amountPaid = recalc.amountPaid;
   sale.balanceDue = recalc.balanceDue;
 
   if (paymentPayload.markDelivered && sale.status === 'pending_delivery') {
     sale.status = 'delivered';
+  }
+
+  return next;
+}
+
+export function applyUpdateSalePrice(db, saleId, newTotalCharged, notes = null) {
+  const next = structuredClone(db);
+  const idx = next.sales.findIndex((s) => s.id === saleId);
+  if (idx < 0) return next;
+
+  const sale = next.sales[idx];
+  const safeTotal = roundMoney(Math.max(0, toNumber(newTotalCharged, sale.totalCharged)));
+
+  const recalc = computeSaleTotals({
+    items: sale.items,
+    suppliesUsed: sale.suppliesUsed,
+    shippingCharged: sale.shippingCharged,
+    shippingCost: sale.shippingCost,
+    customTotalCharged: safeTotal,
+    payments: sale.payments || []
+  });
+
+  sale.totalCharged = recalc.totalCharged;
+  sale.productsRevenue = recalc.productsRevenue;
+  sale.netProfit = recalc.netProfit;
+  sale.balanceDue = recalc.balanceDue;
+  if (notes !== null && notes !== undefined) {
+    sale.notes = notes;
   }
 
   return next;
@@ -2517,8 +2563,27 @@ export async function cloudAddSalePayment(saleId, paymentPayload) {
   const totalPaid = roundMoney(
     (allPays || []).reduce((acc, p) => acc + Number(p.amount), 0)
   );
-  const totalCharged = Number(saleRow.total_charged);
-  const balanceDue = roundMoney(Math.max(0, totalCharged - totalPaid));
+
+  let newTotalCharged = Number(saleRow.total_charged);
+  if (paymentPayload.adjustTotalCharged) {
+    newTotalCharged = totalPaid;
+  } else if (
+    paymentPayload.newTotalCharged !== undefined &&
+    paymentPayload.newTotalCharged !== null &&
+    paymentPayload.newTotalCharged !== ''
+  ) {
+    newTotalCharged = roundMoney(paymentPayload.newTotalCharged);
+  }
+
+  const safeShippingCharged = Number(saleRow.shipping_charged || 0);
+  const safeShippingCost = Number(saleRow.shipping_cost || safeShippingCharged);
+  const productsRevenue = roundMoney(Math.max(0, newTotalCharged - safeShippingCharged));
+  const productsCost = Number(saleRow.products_cost || 0);
+  const suppliesCost = Number(saleRow.supplies_cost || 0);
+  const shippingNet = roundMoney(safeShippingCharged - safeShippingCost);
+  const netProfit = roundMoney(productsRevenue - productsCost - suppliesCost + shippingNet);
+  const balanceDue = roundMoney(Math.max(0, newTotalCharged - totalPaid));
+
   const nextStatus =
     paymentPayload.markDelivered && saleRow.status === 'pending_delivery'
       ? 'delivered'
@@ -2527,12 +2592,60 @@ export async function cloudAddSalePayment(saleId, paymentPayload) {
   const { error: uErr } = await client
     .from('sales')
     .update({
+      total_charged: newTotalCharged,
+      products_revenue: productsRevenue,
+      net_profit: netProfit,
       amount_paid: totalPaid,
       balance_due: balanceDue,
       status: nextStatus
     })
     .eq('id', saleId);
   if (uErr) throw new Error(`Error al actualizar saldo del pedido: ${uErr.message}`);
+
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudUpdateSalePrice(saleId, newTotalCharged, notes = null) {
+  const client = getSupabaseClient();
+  const safeTotal = roundMoney(Math.max(0, toNumber(newTotalCharged, 0)));
+
+  const { data: saleRow, error: sErr } = await client
+    .from('sales')
+    .select('*')
+    .eq('id', saleId)
+    .single();
+  if (sErr || !saleRow) throw new Error('No se encontró el pedido en Supabase.');
+
+  const { data: pays } = await client
+    .from('sale_payments')
+    .select('amount')
+    .eq('sale_id', saleId);
+
+  const amountPaid = roundMoney((pays || []).reduce((acc, p) => acc + Number(p.amount), 0));
+  const safeShippingCharged = Number(saleRow.shipping_charged || 0);
+  const safeShippingCost = Number(saleRow.shipping_cost || safeShippingCharged);
+  const productsRevenue = roundMoney(Math.max(0, safeTotal - safeShippingCharged));
+  const productsCost = Number(saleRow.products_cost || 0);
+  const suppliesCost = Number(saleRow.supplies_cost || 0);
+  const shippingNet = roundMoney(safeShippingCharged - safeShippingCost);
+  const netProfit = roundMoney(productsRevenue - productsCost - suppliesCost + shippingNet);
+  const balanceDue = roundMoney(Math.max(0, safeTotal - amountPaid));
+
+  const updatePayload = {
+    total_charged: safeTotal,
+    products_revenue: productsRevenue,
+    net_profit: netProfit,
+    balance_due: balanceDue
+  };
+  if (notes !== null && notes !== undefined) {
+    updatePayload.notes = notes;
+  }
+
+  const { error: uErr } = await client
+    .from('sales')
+    .update(updatePayload)
+    .eq('id', saleId);
+  if (uErr) throw new Error(`Error al actualizar precio de venta: ${uErr.message}`);
 
   return fetchSupabaseDatabase();
 }

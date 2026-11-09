@@ -34,6 +34,7 @@ import {
   applySaveDeliveryPoint,
   applySaveDeliverySlot,
   applyUpdateProduct,
+  applyUpdateSalePrice,
   applyUpdateSaleStatus,
   applyUpdateStorefrontMerchandising,
   cloudAddCategory,
@@ -58,6 +59,7 @@ import {
   cloudSaveSupply,
   cloudSimulateOrRegisterYapePayment,
   cloudUpdateProduct,
+  cloudUpdateSalePrice,
   cloudUpdateSaleStatus,
   cloudUpdateStorefrontMerchandising,
   cloudUpdateYapeGateway,
@@ -794,8 +796,17 @@ export default function App() {
               onAddPayment={(saleId, payData) =>
                 commitMutation({
                   optimisticFn: (cur) => applyAddSalePayment(cur, saleId, payData),
-                  cloudFn: (cur) => cloudAddSalePayment(cur, saleId, payData),
-                  successMsg: 'Abono registrado.'
+                  cloudFn: () => cloudAddSalePayment(saleId, payData),
+                  successMsg: payData.markDelivered
+                    ? '¡Pago registrado y pedido marcado como entregado!'
+                    : 'Abono registrado con éxito.'
+                })
+              }
+              onUpdateSalePrice={(saleId, newTotalCharged, notes) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyUpdateSalePrice(cur, saleId, newTotalCharged, notes),
+                  cloudFn: () => cloudUpdateSalePrice(saleId, newTotalCharged, notes),
+                  successMsg: 'Precio final del pedido actualizado con éxito.'
                 })
               }
               onChangeSaleStatus={(saleId, nextStatus) =>
