@@ -328,7 +328,7 @@ export default function App() {
     };
   }, [session, notify]);
 
-  // App auto-update checker against version.json buildId
+  // App auto-update checker against version.json buildId with immediate cache purge and hot reload
   const checkForAppUpdate = useCallback(
     async (silent = false) => {
       try {
@@ -342,17 +342,27 @@ export default function App() {
           typeof __APP_BUILD_ID__ !== 'undefined' &&
           data.buildId !== __APP_BUILD_ID__
         ) {
-          notify('Nueva versión del sistema disponible. Actualizando...', false);
-          if ('serviceWorker' in navigator) {
-            const reg = await navigator.serviceWorker.getRegistration();
-            if (reg?.waiting) {
-              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-            } else {
-              setTimeout(() => window.location.reload(), 1400);
-            }
-          } else {
-            setTimeout(() => window.location.reload(), 1400);
+          notify('✨ Nueva versión detectada. Actualizando automáticamente...', false);
+          if ('caches' in window) {
+            try {
+              const keys = await caches.keys();
+              await Promise.all(keys.map((k) => caches.delete(k)));
+            } catch {}
           }
+          if ('serviceWorker' in navigator) {
+            try {
+              const reg = await navigator.serviceWorker.getRegistration();
+              if (reg) {
+                await reg.update();
+                if (reg.waiting) {
+                  reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+              }
+            } catch {}
+          }
+          setTimeout(() => {
+            window.location.reload();
+          }, 600);
         } else if (!silent) {
           notify('La aplicación ya está en su versión más reciente.');
         }
@@ -363,10 +373,27 @@ export default function App() {
     [notify]
   );
 
-  // Periodic update check every 60 seconds
+  // Periodic update check every 20 seconds, plus on visibility/focus/online
   useEffect(() => {
-    const timer = setInterval(() => checkForAppUpdate(true), 60000);
-    return () => clearInterval(timer);
+    checkForAppUpdate(true);
+    const timer = setInterval(() => checkForAppUpdate(true), 20000);
+
+    function onFocusOrVisible() {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        checkForAppUpdate(true);
+      }
+    }
+
+    window.addEventListener('visibilitychange', onFocusOrVisible);
+    window.addEventListener('focus', onFocusOrVisible);
+    window.addEventListener('online', onFocusOrVisible);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('visibilitychange', onFocusOrVisible);
+      window.removeEventListener('focus', onFocusOrVisible);
+      window.removeEventListener('online', onFocusOrVisible);
+    };
   }, [checkForAppUpdate]);
 
   const metrics = useMemo(() => computeDashboardMetrics(db), [db]);

@@ -4,7 +4,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const BUILD_ID = new Date().toISOString();
-const APP_VERSION = '1.2.9';
+const APP_VERSION = '1.3.3';
 
 function pipoVersionManifestPlugin() {
   const payload = JSON.stringify(
@@ -34,6 +34,15 @@ function pipoVersionManifestPlugin() {
       const outDir = path.resolve(process.cwd(), 'dist');
       if (fs.existsSync(outDir)) {
         fs.writeFileSync(path.join(outDir, 'version.json'), payload, 'utf8');
+        const swPath = path.join(outDir, 'sw.js');
+        if (fs.existsSync(swPath)) {
+          let swContent = fs.readFileSync(swPath, 'utf8');
+          swContent = swContent.replace(
+            /const CACHE_NAME = ['"][^'"]+['"];/,
+            `const CACHE_NAME = 'glow-pipo-v-${BUILD_ID}';\n// BuildId: ${BUILD_ID}`
+          );
+          fs.writeFileSync(swPath, swContent, 'utf8');
+        }
       }
     }
   };

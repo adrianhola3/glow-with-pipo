@@ -9,7 +9,21 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register(swUrl, { updateViaCache: 'none' })
       .then((reg) => {
+        // Check for sw.js updates immediately on load
         reg.update().catch(() => {});
+
+        // Re-check automatically whenever the app is brought to foreground
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && navigator.onLine) {
+            reg.update().catch(() => {});
+          }
+        });
+        window.addEventListener('focus', () => {
+          if (navigator.onLine) {
+            reg.update().catch(() => {});
+          }
+        });
+
         reg.addEventListener('updatefound', () => {
           const installing = reg.installing;
           if (!installing) return;

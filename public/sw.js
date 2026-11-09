@@ -1,17 +1,6 @@
-const CACHE_NAME = 'glow-with-pipo-runtime-v2';
+const CACHE_NAME = 'glow-with-pipo-runtime-v3';
 
 self.addEventListener('install', (event) => {
-  const scopeUrl = new URL('./', self.registration.scope).pathname;
-  const preCache = [
-    scopeUrl,
-    `${scopeUrl}index.html`,
-    `${scopeUrl}manifest.webmanifest`,
-    `${scopeUrl}icon-192.png`,
-    `${scopeUrl}icon-512.png`
-  ];
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(preCache)).catch(() => {})
-  );
   self.skipWaiting();
 });
 
@@ -43,7 +32,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first strategy so phones always get fresh deployments immediately when online
+  // Navigation requests (HTML shell): ALWAYS bypass HTTP cache when online so new deployments load instantly
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-cache' })
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
+          }
+          return response;
+        })
+        .catch(() =>
+          caches.match(event.request).then((cached) => {
+            if (cached) return cached;
+            const scopeUrl = new URL('./index.html', self.registration.scope).pathname;
+            return caches.match(scopeUrl);
+          })
+        )
+    );
+    return;
+  }
+
+  // Static assets (hashed JS, CSS, icons): Network-first with immediate cache fallback
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -53,15 +64,6 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() =>
-        caches.match(event.request).then((cached) => {
-          if (cached) return cached;
-          if (event.request.mode === 'navigate') {
-            const scopeUrl = new URL('./index.html', self.registration.scope).pathname;
-            return caches.match(scopeUrl);
-          }
-          return undefined;
-        })
-      )
+      .catch(() => caches.match(event.request))
   );
 });
