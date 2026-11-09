@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -101,6 +102,17 @@ export default function StorefrontView({
   const [activeOrder, setActiveOrder] = useState(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
+
+  // Lock body scroll when modal or cart drawer is open
+  useEffect(() => {
+    if (checkoutOpen || customizingCombo || isCartOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prev;
+      };
+    }
+  }, [checkoutOpen, customizingCombo, isCartOpen]);
 
   const loadStorefront = useCallback(async () => {
     setLoadingCatalog(true);
@@ -653,7 +665,15 @@ export default function StorefrontView({
         <div className="pipo-store-hero-inner">
           <div className="pipo-hero-badge">
             <Sparkles size={14} />
-            <span>Tienda Oficial · Stock en Tiempo Real · Pago Yape Instantáneo</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              Tienda Oficial · Stock en Vivo · Pago con
+              <img
+                src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                alt="Yape"
+                className="pipo-yape-badge-img"
+              />
+              Instantáneo
+            </span>
           </div>
           <h1 className="pipo-hero-heading">
             Tu rincón favorito de belleza <em>Glow with Pipo</em> 🎀
@@ -1091,558 +1111,606 @@ export default function StorefrontView({
       )}
 
       {/* Customizable Combo Shade Picker Modal */}
-      {customizingCombo && (
-        <div className="modal-backdrop" onClick={() => setCustomizingCombo(null)}>
-          <div
-            className="modal-panel"
-            style={{ maxWidth: 520 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div>
-                <span className="badge badge-brand">✨ Personaliza tu Combo</span>
-                <h3 style={{ margin: '4px 0 0', color: 'var(--pipo-burgundy)' }}>
-                  {customizingCombo.combo.name}
-                </h3>
-              </div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setCustomizingCombo(null)}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--pipo-cocoa)' }}>
-                Elige el tono exacto que deseas para cada producto de tu combo:
-              </p>
-
-              {customizingCombo.comboMeta.detailedItems.map((di, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: 'var(--pipo-ivory)',
-                    border: '1px solid var(--pipo-border)',
-                    borderRadius: 14,
-                    padding: 12
-                  }}
-                >
-                  <div
-                    style={{
-                      fontWeight: 800,
-                      color: 'var(--pipo-burgundy)',
-                      fontSize: '0.92rem',
-                      marginBottom: 8
-                    }}
-                  >
-                    {di.quantity}x {di.product?.name}
-                  </div>
-                  <div className="pipo-shades-pills">
-                    {di.availableVariants.map((v) => {
-                      const selected = comboShadeChoices[idx] === v.id;
-                      return (
-                        <button
-                          key={v.id}
-                          type="button"
-                          className={`pipo-shade-pill ${selected ? 'selected' : ''}`}
-                          onClick={() =>
-                            setComboShadeChoices((prev) => ({ ...prev, [idx]: v.id }))
-                          }
-                        >
-                          {v.colorHex && (
-                            <span
-                              className="pipo-shade-swatch"
-                              style={{ backgroundColor: v.colorHex }}
-                            />
-                          )}
-                          <span>{v.shadeName}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setCustomizingCombo(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={confirmCustomizableComboAdd}
-              >
-                <ShoppingBag size={16} /> Agregar Combo ({formatMoney(customizingCombo.comboMeta.totalComboPrice)})
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Slide-Over Cart Drawer */}
-      {isCartOpen && (
-        <div className="pipo-drawer-backdrop" onClick={() => setIsCartOpen(false)}>
-          <aside className="pipo-cart-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="pipo-cart-drawer-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <ShoppingBag size={20} color="var(--pipo-burgundy)" />
-                <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>
-                  Tu Bolsita Pipo
-                </h3>
-              </div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setIsCartOpen(false)}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="pipo-cart-drawer-body">
-              {cart.length === 0 ? (
-                <div className="pipo-cart-empty">
-                  <Heart size={36} color="var(--pipo-petal)" />
-                  <h4>Tu bolsita está vacía</h4>
-                  <p>Explora nuestros labiales, rubores y combos para armar tu pedido.</p>
-                </div>
-              ) : (
-                <div className="pipo-cart-items">
-                  {cart.map((item) => (
-                    <div key={item.cartKey} className="pipo-cart-item">
-                      <div className="pipo-cart-item-info">
-                        <div className="pipo-cart-item-title">{item.productName}</div>
-                        <div className="pipo-cart-item-meta">
-                          {item.colorHex && (
-                            <span
-                              className="pipo-shade-swatch"
-                              style={{ backgroundColor: item.colorHex }}
-                            />
-                          )}
-                          <span>Tono: {item.shadeName}</span>
-                          {item.sourceComboName && (
-                            <span className="badge badge-brand" style={{ fontSize: '0.68rem' }}>
-                              🎁 {item.sourceComboName}
-                            </span>
-                          )}
-                        </div>
-                        <div className="pipo-cart-item-price">
-                          {formatMoney(item.appliedUnitPrice)} c/u
-                        </div>
-                      </div>
-
-                      <div className="pipo-cart-item-controls">
-                        <div className="pipo-qty-stepper">
-                          <button
-                            type="button"
-                            onClick={() => updateCartItemQty(item.cartKey, -1)}
-                            aria-label="Disminuir cantidad"
-                          >
-                            <Minus size={13} />
-                          </button>
-                          <span>{item.quantity}</span>
-                          <button
-                            type="button"
-                            onClick={() => updateCartItemQty(item.cartKey, 1)}
-                            disabled={item.quantity >= item.maxStock}
-                            aria-label="Aumentar cantidad"
-                          >
-                            <Plus size={13} />
-                          </button>
-                        </div>
-                        <div className="pipo-cart-line-total">
-                          {formatMoney(item.quantity * item.appliedUnitPrice)}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {cart.length > 0 && (
-              <div className="pipo-cart-drawer-footer">
-                <div className="pipo-cart-total-row">
-                  <span>Total a pagar (Sin comisiones)</span>
-                  <strong>{formatMoney(cartSummary.subtotal)}</strong>
+      {customizingCombo &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => setCustomizingCombo(null)}>
+            <div
+              className="modal-panel"
+              style={{ maxWidth: 520 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div>
+                  <span className="badge badge-brand">✨ Personaliza tu Combo</span>
+                  <h3 style={{ margin: '4px 0 0', color: 'var(--pipo-burgundy)' }}>
+                    {customizingCombo.combo.name}
+                  </h3>
                 </div>
                 <button
                   type="button"
-                  className="btn btn-primary"
-                  style={{ width: '100%', justifyContent: 'center', padding: '13px 18px', fontSize: '0.98rem' }}
-                  onClick={openCheckoutFlow}
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setCustomizingCombo(null)}
                 >
-                  <Sparkles size={18} /> Continuar con mi Pedido →
+                  <X size={18} />
                 </button>
               </div>
-            )}
-          </aside>
-        </div>
-      )}
 
-      {/* Checkout & Resilient Yape Verification Modal */}
-      {checkoutOpen && (
-        <div className="modal-backdrop" onClick={() => checkoutStep !== 'payment' && setCheckoutOpen(false)}>
-          <div
-            className="modal-panel pipo-checkout-modal"
-            style={{ maxWidth: 620 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div>
-                <span className="badge badge-brand">
-                  {checkoutStep === 'form' && 'Paso 1 de 2 · Datos y Punto de Entrega'}
-                  {checkoutStep === 'payment' && 'Paso 2 de 2 · Pago Seguro con Yape'}
-                  {checkoutStep === 'verified' && '✨ ¡Pedido Confirmado!'}
-                </span>
-                <h3 style={{ margin: '4px 0 0', fontFamily: 'var(--font-display)', fontSize: '1.35rem', color: 'var(--pipo-burgundy)' }}>
-                  {checkoutStep === 'form' && 'Programa tu entrega Glow with Pipo'}
-                  {checkoutStep === 'payment' && `Realiza tu Yape por ${formatMoney(activeOrder?.totalCharged || cartSummary.subtotal)}`}
-                  {checkoutStep === 'verified' && `¡Gracias por tu compra, ${customerName}!`}
-                </h3>
-              </div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setCheckoutOpen(false)}
-              >
-                <X size={18} />
-              </button>
-            </div>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--pipo-cocoa)' }}>
+                  Elige el tono exacto que deseas para cada producto de tu combo:
+                </p>
 
-            {/* Automatic Pre-Flight Yape Detector Health Bar (Wake-on-Checkout) */}
-            <div className="pipo-yape-preflight-bar">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Wifi size={15} color="var(--status-ok-fg)" />
-                <span>
-                  {checkingGateway
-                    ? 'Despertando validador automático de Yape...'
-                    : 'Validador Yape en línea · Verificación automática de monto + titular activa'}
-                </span>
-              </div>
-              <span className="badge badge-ok" style={{ fontSize: '0.68rem' }}>
-                0% Comisión
-              </span>
-            </div>
-
-            {checkoutStep === 'form' && (
-              <form onSubmit={handleCreateWebOrder} className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div className="grid-2">
-                  <div className="field">
-                    <label>
-                      <User size={13} style={{ marginRight: 4 }} /> Tu Nombre y Apellido *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ej. Valeria Morales"
-                      value={customerName}
-                      onChange={(e) => {
-                        setCustomerName(e.target.value);
-                        if (!yapeHolderName) setYapeHolderName(e.target.value);
+                {customizingCombo.comboMeta.detailedItems.map((di, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'var(--pipo-ivory)',
+                      border: '1px solid var(--pipo-border)',
+                      borderRadius: 14,
+                      padding: 12
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 800,
+                        color: 'var(--pipo-burgundy)',
+                        fontSize: '0.92rem',
+                        marginBottom: 8
                       }}
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label>📱 Tu WhatsApp de contacto *</label>
-                    <input
-                      type="tel"
-                      required
-                      placeholder="Ej. 987 654 321"
-                      value={customerWhatsapp}
-                      onChange={(e) => setCustomerWhatsapp(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div
-                  className="field"
-                  style={{
-                    background: 'rgba(224, 131, 152, 0.12)',
-                    border: '1px solid rgba(114, 36, 36, 0.18)',
-                    padding: 12,
-                    borderRadius: 14
-                  }}
-                >
-                  <label style={{ color: 'var(--pipo-burgundy)', fontWeight: 800 }}>
-                    <ShieldCheck size={15} style={{ marginRight: 5, verticalAlign: 'text-bottom' }} />
-                    Nombre completo del titular de la cuenta Yape con la que pagarás *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Exactamente como figura en el Yape que enviará el pago"
-                    value={yapeHolderName}
-                    onChange={(e) => setYapeHolderName(e.target.value)}
-                  />
-                  <small style={{ fontSize: '0.74rem', color: 'var(--pipo-cocoa)', marginTop: 4, display: 'block' }}>
-                    💡 Si otra persona (familiar o amigo) realizará el Yape por ti, escribe aquí su nombre y apellido completos para que el detector valide tu pago al instante sin cruces.
-                  </small>
-                </div>
-
-                {/* Delivery Point Selection */}
-                <div className="field">
-                  <label>
-                    <MapPin size={14} style={{ marginRight: 4 }} /> Elige tu Punto de Entrega (No realizamos envíos a domicilio) *
-                  </label>
-                  <div className="pipo-checkout-points-grid">
-                    {(catalog.deliveryPoints || []).map((pt) => {
-                      const active = selectedPointId === pt.id;
-                      return (
-                        <button
-                          key={pt.id}
-                          type="button"
-                          className={`pipo-checkout-point-btn ${active ? 'active' : ''}`}
-                          onClick={() => setSelectedPointId(pt.id)}
-                        >
-                          <div style={{ fontSize: '0.7rem', color: 'var(--pipo-cocoa)', fontWeight: 700 }}>
-                            {getZoneLabel(pt.zoneType)}
-                          </div>
-                          <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '0.88rem' }}>
-                            {pt.name}
-                          </strong>
-                          {pt.referenceInfo && (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)' }}>
-                              {pt.referenceInfo}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Available Time Slots for Selected Point */}
-                <div className="field">
-                  <label>
-                    <Clock size={14} style={{ marginRight: 4 }} /> Horario disponible programado por Adrián y Fabiana *
-                  </label>
-                  {availableSlotsForPoint.length > 0 ? (
-                    <div className="pipo-checkout-slots-grid">
-                      {availableSlotsForPoint.map((slot) => {
-                        const isSelected = selectedSlotId === slot.id;
-                        const remaining = Math.max(0, (slot.maxOrders || 10) - (slot.bookedOrders || 0));
+                    >
+                      {di.quantity}x {di.product?.name}
+                    </div>
+                    <div className="pipo-shades-pills">
+                      {di.availableVariants.map((v) => {
+                        const selected = comboShadeChoices[idx] === v.id;
                         return (
                           <button
-                            key={slot.id}
+                            key={v.id}
                             type="button"
-                            className={`pipo-checkout-slot-btn ${isSelected ? 'active' : ''}`}
-                            onClick={() => setSelectedSlotId(slot.id)}
+                            className={`pipo-shade-pill ${selected ? 'selected' : ''}`}
+                            onClick={() =>
+                              setComboShadeChoices((prev) => ({ ...prev, [idx]: v.id }))
+                            }
                           >
-                            <strong>{slot.dayLabel}</strong>
-                            <span>{slot.timeRange}</span>
-                            <small>{remaining} cupos libres</small>
+                            {v.colorHex && (
+                              <span
+                                className="pipo-shade-swatch"
+                                style={{ backgroundColor: v.colorHex }}
+                              />
+                            )}
+                            <span>{v.shadeName}</span>
                           </button>
                         );
                       })}
                     </div>
-                  ) : (
-                    <div className="badge badge-brand" style={{ padding: '10px 12px' }}>
-                      Horario flexible a coordinar directamente por WhatsApp tras confirmar tu pedido.
-                    </div>
-                  )}
-                </div>
+                  </div>
+                ))}
+              </div>
 
-                <div className="field">
-                  <label>Nota adicional (Opcional)</label>
-                  <input
-                    type="text"
-                    placeholder="Ej. Llevo casaca beige / Nos vemos en la puerta principal"
-                    value={orderNotes}
-                    onChange={(e) => setOrderNotes(e.target.value)}
-                  />
-                </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setCustomizingCombo(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={confirmCustomizableComboAdd}
+                >
+                  <ShoppingBag size={16} /> Agregar Combo ({formatMoney(customizingCombo.comboMeta.totalComboPrice)})
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
-                {checkoutError && (
-                  <div className="badge badge-danger" style={{ padding: '10px 12px', whiteSpace: 'normal' }}>
-                    {checkoutError}
+      {/* Slide-Over Cart Drawer */}
+      {isCartOpen &&
+        createPortal(
+          <div className="pipo-drawer-backdrop" onClick={() => setIsCartOpen(false)}>
+            <aside className="pipo-cart-drawer" onClick={(e) => e.stopPropagation()}>
+              <div className="pipo-cart-drawer-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <ShoppingBag size={20} color="var(--pipo-burgundy)" />
+                  <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>
+                    Tu Bolsita Pipo
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setIsCartOpen(false)}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="pipo-cart-drawer-body">
+                {cart.length === 0 ? (
+                  <div className="pipo-cart-empty">
+                    <Heart size={36} color="var(--pipo-petal)" />
+                    <h4>Tu bolsita está vacía</h4>
+                    <p>Explora nuestros labiales, rubores y combos para armar tu pedido.</p>
+                  </div>
+                ) : (
+                  <div className="pipo-cart-items">
+                    {cart.map((item) => (
+                      <div key={item.cartKey} className="pipo-cart-item">
+                        <div className="pipo-cart-item-info">
+                          <div className="pipo-cart-item-title">{item.productName}</div>
+                          <div className="pipo-cart-item-meta">
+                            {item.colorHex && (
+                              <span
+                                className="pipo-shade-swatch"
+                                style={{ backgroundColor: item.colorHex }}
+                              />
+                            )}
+                            <span>Tono: {item.shadeName}</span>
+                            {item.sourceComboName && (
+                              <span className="badge badge-brand" style={{ fontSize: '0.68rem' }}>
+                                🎁 {item.sourceComboName}
+                              </span>
+                            )}
+                          </div>
+                          <div className="pipo-cart-item-price">
+                            {formatMoney(item.appliedUnitPrice)} c/u
+                          </div>
+                        </div>
+
+                        <div className="pipo-cart-item-controls">
+                          <div className="pipo-qty-stepper">
+                            <button
+                              type="button"
+                              onClick={() => updateCartItemQty(item.cartKey, -1)}
+                              aria-label="Disminuir cantidad"
+                            >
+                              <Minus size={13} />
+                            </button>
+                            <span>{item.quantity}</span>
+                            <button
+                              type="button"
+                              onClick={() => updateCartItemQty(item.cartKey, 1)}
+                              disabled={item.quantity >= item.maxStock}
+                              aria-label="Aumentar cantidad"
+                            >
+                              <Plus size={13} />
+                            </button>
+                          </div>
+                          <div className="pipo-cart-line-total">
+                            {formatMoney(item.quantity * item.appliedUnitPrice)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
-
-                <div className="modal-footer" style={{ padding: '12px 0 0', borderTop: '1px solid var(--pipo-border)' }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setCheckoutOpen(false)}
-                  >
-                    Volver
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={submittingOrder}
-                  >
-                    <ShieldCheck size={17} />
-                    {submittingOrder
-                      ? 'Reservando tu pedido...'
-                      : `Pasar al Pago Yape (${formatMoney(cartSummary.subtotal)}) →`}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {checkoutStep === 'payment' && activeOrder && (
-              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div className="pipo-yape-payment-box">
-                  <div className="pipo-yape-header-pill">💜 Yape Oficial Glow with Pipo</div>
-                  <div className="pipo-yape-amount-display">
-                    {formatMoney(activeOrder.totalCharged)}
-                  </div>
-                  <p style={{ margin: '4px 0 12px', fontSize: '0.85rem', color: 'var(--pipo-cocoa)' }}>
-                    Yapea el monto exacto desde la cuenta de{' '}
-                    <strong style={{ color: 'var(--pipo-burgundy)' }}>
-                      {activeOrder.yapeHolderName}
-                    </strong>
-                  </p>
-
-                  <div className="pipo-yape-number-card">
-                    <div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)', fontWeight: 700 }}>
-                        NÚMERO OFICIAL YAPE ({gatewayHealth?.receiverName || 'Glow with Pipo'})
-                      </div>
-                      <div style={{ fontSize: '1.35rem', fontWeight: 900, color: 'var(--pipo-burgundy)', letterSpacing: '0.04em' }}>
-                        {receiverPhone}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={handleCopyPhone}
-                    >
-                      <Copy size={14} /> {copiedPhone ? '¡Copiado!' : 'Copiar número'}
-                    </button>
-                  </div>
-
-                  <div className="pipo-yape-live-radar">
-                    <RefreshCw size={18} className="pipo-spin" color="var(--pipo-burgundy)" />
-                    <div>
-                      <strong>Esperando tu Yape en tiempo real...</strong>
-                      <div style={{ fontSize: '0.76rem', color: 'var(--pipo-muted)' }}>
-                        Pedido <strong>{activeOrder.code}</strong> reservado · El sistema detectará tu pago automáticamente.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                    disabled={checkingPayment}
-                    onClick={handleManualCheckYapeNow}
-                  >
-                    <RefreshCw size={16} className={checkingPayment ? 'pipo-spin' : ''} />
-                    {checkingPayment ? 'Verificando recepción...' : '¡Ya yapeé! Verificar ahora'}
-                  </button>
-
-                  <a
-                    href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
-                      `¡Hola Glow with Pipo! 🌸 Acabo de registrar mi pedido web *${activeOrder.code}* por *${formatMoney(
-                        activeOrder.totalCharged
-                      )}*.\n\n👤 Cliente: ${customerName}\n💜 Titular Yape: ${
-                        activeOrder.yapeHolderName
-                      }\n📍 Punto de entrega: ${activeOrder.deliveryLocation}\n🕒 Horario: ${
-                        activeOrder.deliveryTime
-                      }`
-                    )}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-secondary"
-                    style={{ justifyContent: 'center' }}
-                  >
-                    <MessageCircle size={16} /> Avisar por WhatsApp
-                  </a>
-                </div>
               </div>
-            )}
 
-            {checkoutStep === 'verified' && activeOrder && (
-              <div className="modal-body" style={{ textAlign: 'center', padding: '24px 20px' }}>
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: '50%',
-                    background: 'var(--status-ok-bg)',
-                    color: 'var(--status-ok-fg)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginBottom: 12
-                  }}
-                >
-                  <CheckCircle2 size={36} />
-                </div>
-                <h3 style={{ margin: '0 0 6px', fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--pipo-burgundy)' }}>
-                  ¡Pago Yape Verificado con Éxito! 🎀
-                </h3>
-                <p style={{ margin: '0 auto 16px', maxWidth: 440, color: 'var(--pipo-cocoa)', fontSize: '0.9rem' }}>
-                  Tu pedido <strong>{activeOrder.code}</strong> ya está registrado y pagado en el sistema de Adrián y Fabiana.
-                </p>
-
-                <div
-                  style={{
-                    background: 'var(--pipo-ivory)',
-                    border: '1px solid var(--pipo-border)',
-                    borderRadius: 16,
-                    padding: 14,
-                    textAlign: 'left',
-                    marginBottom: 18,
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  <div>
-                    <strong>Código de Pedido:</strong> {activeOrder.code}
+              {cart.length > 0 && (
+                <div className="pipo-cart-drawer-footer">
+                  <div className="pipo-cart-total-row">
+                    <span>Total a pagar (Sin comisiones)</span>
+                    <strong>{formatMoney(cartSummary.subtotal)}</strong>
                   </div>
-                  <div>
-                    <strong>Monto Pagado:</strong> {formatMoney(activeOrder.totalCharged)} (Yape verificado)
-                  </div>
-                  <div>
-                    <strong>Punto de Entrega:</strong> {activeOrder.deliveryLocation}
-                  </div>
-                  <div>
-                    <strong>Horario Programado:</strong> {activeOrder.deliveryTime}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <a
-                    href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
-                      `¡Hola Glow with Pipo! 🎀 Mi pago Yape del pedido *${activeOrder.code}* (${formatMoney(
-                        activeOrder.totalCharged
-                      )}) ya fue verificado en la web. ¡Nos vemos en ${activeOrder.deliveryLocation}!`
-                    )}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn btn-primary"
-                  >
-                    <MessageCircle size={16} /> Abrir WhatsApp de Confirmación
-                  </a>
                   <button
                     type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setCheckoutOpen(false);
-                      setActiveOrder(null);
+                    className="btn btn-primary"
+                    style={{ width: '100%', justifyContent: 'center', padding: '13px 18px', fontSize: '0.98rem' }}
+                    onClick={openCheckoutFlow}
+                  >
+                    <Sparkles size={18} /> Continuar con mi Pedido →
+                  </button>
+                </div>
+              )}
+            </aside>
+          </div>,
+          document.body
+        )}
+
+      {/* Checkout & Resilient Yape Verification Modal */}
+      {checkoutOpen &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => checkoutStep !== 'payment' && setCheckoutOpen(false)}>
+            <div
+              className="modal-panel pipo-checkout-modal"
+              style={{ maxWidth: 620 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div>
+                  <span className="badge badge-brand">
+                    {checkoutStep === 'form' && 'Paso 1 de 2 · Datos y Punto de Entrega'}
+                    {checkoutStep === 'payment' && 'Paso 2 de 2 · Pago Seguro con Yape'}
+                    {checkoutStep === 'verified' && '✨ ¡Pedido Confirmado!'}
+                  </span>
+                  <h3 style={{ margin: '4px 0 0', fontFamily: 'var(--font-display)', fontSize: '1.35rem', color: 'var(--pipo-burgundy)' }}>
+                    {checkoutStep === 'form' && 'Programa tu entrega Glow with Pipo'}
+                    {checkoutStep === 'payment' && `Realiza tu Yape por ${formatMoney(activeOrder?.totalCharged || cartSummary.subtotal)}`}
+                    {checkoutStep === 'verified' && `¡Gracias por tu compra, ${customerName}!`}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setCheckoutOpen(false)}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Automatic Pre-Flight Yape Detector Health Bar (Wake-on-Checkout) */}
+              <div className="pipo-yape-preflight-bar">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <img
+                    src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                    alt="Yape"
+                    className="pipo-yape-badge-img"
+                  />
+                  <span>
+                    {checkingGateway
+                      ? 'Despertando detector automático de Yape...'
+                      : 'Validador Yape de Fabiana activo · Verificación automática de monto + titular'}
+                  </span>
+                </div>
+                <span className="badge badge-ok" style={{ fontSize: '0.68rem' }}>
+                  0% Comisión
+                </span>
+              </div>
+
+              {checkoutStep === 'form' && (
+                <form onSubmit={handleCreateWebOrder} className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div className="grid-2">
+                    <div className="field">
+                      <label>
+                        <User size={13} style={{ marginRight: 4 }} /> Tu Nombre y Apellido *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Ej. Valeria Morales"
+                        value={customerName}
+                        onChange={(e) => {
+                          setCustomerName(e.target.value);
+                          if (!yapeHolderName) setYapeHolderName(e.target.value);
+                        }}
+                      />
+                    </div>
+
+                    <div className="field">
+                      <label>📱 Tu WhatsApp de contacto *</label>
+                      <input
+                        type="tel"
+                        required
+                        placeholder="Ej. 987 654 321"
+                        value={customerWhatsapp}
+                        onChange={(e) => setCustomerWhatsapp(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    className="field"
+                    style={{
+                      background: 'rgba(224, 131, 152, 0.12)',
+                      border: '1px solid rgba(114, 36, 36, 0.18)',
+                      padding: 12,
+                      borderRadius: 14
                     }}
                   >
-                    Seguir viendo la tienda
-                  </button>
+                    <label style={{ color: 'var(--pipo-burgundy)', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <img
+                        src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                        alt="Yape"
+                        className="pipo-yape-badge-img"
+                      />
+                      <span>Nombre completo del titular de la cuenta con la que pagarás *</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Exactamente como figura en el Yape que enviará el pago"
+                      value={yapeHolderName}
+                      onChange={(e) => setYapeHolderName(e.target.value)}
+                    />
+                    <small style={{ fontSize: '0.74rem', color: 'var(--pipo-cocoa)', marginTop: 4, display: 'block' }}>
+                      💡 Si otra persona (familiar o amigo) realizará el Yape por ti, escribe aquí su nombre y apellido completos para que el detector valide tu pago al instante sin cruces.
+                    </small>
+                  </div>
+
+                  {/* Delivery Point Selection */}
+                  <div className="field">
+                    <label>
+                      <MapPin size={14} style={{ marginRight: 4 }} /> Elige tu Punto de Entrega (No realizamos envíos a domicilio) *
+                    </label>
+                    <div className="pipo-checkout-points-grid">
+                      {(catalog.deliveryPoints || []).map((pt) => {
+                        const active = selectedPointId === pt.id;
+                        return (
+                          <button
+                            key={pt.id}
+                            type="button"
+                            className={`pipo-checkout-point-btn ${active ? 'active' : ''}`}
+                            onClick={() => setSelectedPointId(pt.id)}
+                          >
+                            <div style={{ fontSize: '0.7rem', color: 'var(--pipo-cocoa)', fontWeight: 700 }}>
+                              {getZoneLabel(pt.zoneType)}
+                            </div>
+                            <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '0.88rem' }}>
+                              {pt.name}
+                            </strong>
+                            {pt.referenceInfo && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)' }}>
+                                {pt.referenceInfo}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Available Time Slots for Selected Point */}
+                  <div className="field">
+                    <label>
+                      <Clock size={14} style={{ marginRight: 4 }} /> Horario disponible programado por Adrián y Fabiana *
+                    </label>
+                    {availableSlotsForPoint.length > 0 ? (
+                      <div className="pipo-checkout-slots-grid">
+                        {availableSlotsForPoint.map((slot) => {
+                          const isSelected = selectedSlotId === slot.id;
+                          const remaining = Math.max(0, (slot.maxOrders || 10) - (slot.bookedOrders || 0));
+                          return (
+                            <button
+                              key={slot.id}
+                              type="button"
+                              className={`pipo-checkout-slot-btn ${isSelected ? 'active' : ''}`}
+                              onClick={() => setSelectedSlotId(slot.id)}
+                            >
+                              <strong>{slot.dayLabel}</strong>
+                              <span>{slot.timeRange}</span>
+                              <small>{remaining} cupos libres</small>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="badge badge-brand" style={{ padding: '10px 12px' }}>
+                        Horario flexible a coordinar directamente por WhatsApp tras confirmar tu pedido.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <label>Nota adicional (Opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Llevo casaca beige / Nos vemos en la puerta principal"
+                      value={orderNotes}
+                      onChange={(e) => setOrderNotes(e.target.value)}
+                    />
+                  </div>
+
+                  {checkoutError && (
+                    <div className="badge badge-danger" style={{ padding: '10px 12px', whiteSpace: 'normal' }}>
+                      {checkoutError}
+                    </div>
+                  )}
+
+                  <div className="modal-footer" style={{ padding: '12px 0 0', borderTop: '1px solid var(--pipo-border)' }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => setCheckoutOpen(false)}
+                    >
+                      Volver
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={submittingOrder}
+                    >
+                      <ShieldCheck size={17} />
+                      {submittingOrder
+                        ? 'Reservando tu pedido...'
+                        : `Pasar al Pago Yape (${formatMoney(cartSummary.subtotal)}) →`}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {checkoutStep === 'payment' && activeOrder && (
+                <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div className="pipo-yape-payment-box">
+                    <div className="pipo-yape-brand-hero">
+                      <img
+                        src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                        alt="Yape"
+                        className="pipo-yape-hero-logo"
+                      />
+                    </div>
+
+                    <div className="pipo-yape-header-pill">
+                      <img
+                        src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                        alt="Yape"
+                        className="pipo-yape-badge-img"
+                      />
+                      <span>Pago Directo a Fabiana · Glow with Pipo</span>
+                    </div>
+
+                    <div className="pipo-yape-amount-display">
+                      {formatMoney(activeOrder.totalCharged)}
+                    </div>
+                    <p style={{ margin: '4px 0 12px', fontSize: '0.85rem', color: 'var(--pipo-cocoa)' }}>
+                      Yapea el monto exacto desde la cuenta de{' '}
+                      <strong style={{ color: 'var(--pipo-burgundy)' }}>
+                        {activeOrder.yapeHolderName}
+                      </strong>
+                    </p>
+
+                    <div className="pipo-yape-number-card">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <img
+                          src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                          alt="Yape"
+                          style={{ height: 38, width: 'auto' }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                            NÚMERO OFICIAL DE YAPE (FABIANA)
+                          </div>
+                          <div style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--pipo-burgundy)', letterSpacing: '0.04em' }}>
+                            {receiverPhone}
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--pipo-cocoa)', fontWeight: 600 }}>
+                            Titular receptora: Fabiana
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleCopyPhone}
+                      >
+                        <Copy size={14} /> {copiedPhone ? '¡Copiado!' : 'Copiar número'}
+                      </button>
+                    </div>
+
+                    <div className="pipo-yape-live-radar">
+                      <RefreshCw size={18} className="pipo-spin" color="var(--pipo-burgundy)" />
+                      <div>
+                        <strong>Esperando tu Yape en tiempo real...</strong>
+                        <div style={{ fontSize: '0.76rem', color: 'var(--pipo-muted)' }}>
+                          Pedido <strong>{activeOrder.code}</strong> reservado · El detector validará tu abono a nombre de Fabiana.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ flex: 1, justifyContent: 'center' }}
+                      disabled={checkingPayment}
+                      onClick={handleManualCheckYapeNow}
+                    >
+                      <RefreshCw size={16} className={checkingPayment ? 'pipo-spin' : ''} />
+                      {checkingPayment ? 'Verificando recepción...' : '¡Ya yapeé! Verificar ahora'}
+                    </button>
+
+                    <a
+                      href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
+                        `¡Hola Glow with Pipo! 🌸 Acabo de registrar mi pedido web *${activeOrder.code}* por *${formatMoney(
+                          activeOrder.totalCharged
+                        )}*.\n\n👤 Cliente: ${customerName}\n💜 Titular Yape: ${
+                          activeOrder.yapeHolderName
+                        }\n📍 Punto de entrega: ${activeOrder.deliveryLocation}\n🕒 Horario: ${
+                          activeOrder.deliveryTime
+                        }`
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary"
+                      style={{ justifyContent: 'center' }}
+                    >
+                      <MessageCircle size={16} /> Avisar por WhatsApp
+                    </a>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+              )}
+
+              {checkoutStep === 'verified' && activeOrder && (
+                <div className="modal-body" style={{ textAlign: 'center', padding: '24px 20px' }}>
+                  <div
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: '50%',
+                      background: 'var(--status-ok-bg)',
+                      color: 'var(--status-ok-fg)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 12
+                    }}
+                  >
+                    <CheckCircle2 size={36} />
+                  </div>
+                  <h3 style={{ margin: '0 0 6px', fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--pipo-burgundy)' }}>
+                    ¡Pago Yape Verificado con Éxito! 🎀
+                  </h3>
+                  <p style={{ margin: '0 auto 16px', maxWidth: 440, color: 'var(--pipo-cocoa)', fontSize: '0.9rem' }}>
+                    Tu pedido <strong>{activeOrder.code}</strong> ya está registrado y pagado en el sistema de Adrián y Fabiana.
+                  </p>
+
+                  <div
+                    style={{
+                      background: 'var(--pipo-ivory)',
+                      border: '1px solid var(--pipo-border)',
+                      borderRadius: 16,
+                      padding: 14,
+                      textAlign: 'left',
+                      marginBottom: 18,
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    <div>
+                      <strong>Código de Pedido:</strong> {activeOrder.code}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <strong>Monto Pagado:</strong> {formatMoney(activeOrder.totalCharged)}
+                      <span className="badge badge-ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <img
+                          src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                          alt="Yape"
+                          style={{ height: 13, width: 'auto' }}
+                        />
+                        Verificado
+                      </span>
+                    </div>
+                    <div>
+                      <strong>Punto de Entrega:</strong> {activeOrder.deliveryLocation}
+                    </div>
+                    <div>
+                      <strong>Horario Programado:</strong> {activeOrder.deliveryTime}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <a
+                      href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
+                        `¡Hola Glow with Pipo! 🎀 Mi pago Yape del pedido *${activeOrder.code}* (${formatMoney(
+                          activeOrder.totalCharged
+                        )}) ya fue verificado en la web. ¡Nos vemos en ${activeOrder.deliveryLocation}!`
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-primary"
+                    >
+                      <MessageCircle size={16} /> Abrir WhatsApp de Confirmación
+                    </a>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        setCheckoutOpen(false);
+                        setActiveOrder(null);
+                      }}
+                    >
+                      Seguir viendo la tienda
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

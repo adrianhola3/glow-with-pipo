@@ -256,7 +256,7 @@ body {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
@@ -869,16 +869,20 @@ select:hover,
 
 /* Modal */
 .modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(61, 41, 39, 0.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  z-index: 1000;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  background: rgba(61, 41, 39, 0.55);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 16px;
+  z-index: 99999 !important;
+  overflow-y: auto;
   animation: pipoFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -891,7 +895,8 @@ select:hover,
   max-height: 90dvh;
   overflow-y: auto;
   padding: 20px 18px;
-  box-shadow: 0 12px 36px rgba(61, 41, 39, 0.2);
+  margin: auto;
+  box-shadow: 0 16px 44px rgba(61, 41, 39, 0.25);
   animation: pipoModalSlideUp 0.26s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -2781,7 +2786,7 @@ select:hover,
   background: var(--pipo-blush);
 }
 
-/* Yape Payment Box */
+/* Yape Payment Box & Logos */
 .pipo-yape-payment-box {
   background: linear-gradient(135deg, #742284 0%, #4b1557 100%);
   color: #ffffff;
@@ -2791,6 +2796,27 @@ select:hover,
   box-shadow: 0 8px 24px rgba(75, 21, 87, 0.28);
 }
 
+.pipo-yape-brand-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.pipo-yape-hero-logo {
+  height: 52px;
+  width: auto;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.3));
+}
+
+.pipo-yape-badge-img {
+  height: 24px;
+  width: auto;
+  vertical-align: middle;
+  object-fit: contain;
+}
+
 .pipo-yape-header-pill {
   display: inline-block;
   background: rgba(255, 255, 255, 0.18);
@@ -2798,7 +2824,7 @@ select:hover,
   font-weight: 800;
   padding: 4px 12px;
   border-radius: 999px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .pipo-yape-amount-display {
@@ -2831,6 +2857,66 @@ select:hover,
   gap: 10px;
   text-align: left;
   font-size: 0.82rem;
+}
+
+/* Pagination Controls */
+.pipo-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--pipo-border);
+}
+
+.pipo-pagination-info {
+  font-size: 0.82rem;
+  color: var(--pipo-muted);
+  font-weight: 700;
+}
+
+.pipo-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pipo-page-pill {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1.5px solid var(--pipo-border);
+  background: #ffffff;
+  color: var(--pipo-espresso);
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.16s ease;
+}
+
+.pipo-page-pill:hover:not(:disabled) {
+  border-color: var(--pipo-burgundy);
+  background: var(--pipo-ivory);
+}
+
+.pipo-page-pill.active {
+  background: var(--pipo-burgundy);
+  border-color: var(--pipo-burgundy);
+  color: #fffdf9;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(114, 36, 36, 0.2);
+}
+
+.pipo-page-pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Curation Admin Grid */

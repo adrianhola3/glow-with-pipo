@@ -48,7 +48,7 @@ function createEmptyDatabase() {
       batteryLevel: 95,
       notificationsEnabled: true,
       receiverPhone: '+51 948 254 832',
-      receiverName: 'Glow with Pipo'
+      receiverName: 'Fabiana'
     },
     yapeIncomingPayments: []
   };
@@ -1541,7 +1541,7 @@ export async function fetchSupabaseDatabase() {
           batteryLevel: yapeGatewayRes.data.battery_level ?? 95,
           notificationsEnabled: yapeGatewayRes.data.notifications_enabled !== false,
           receiverPhone: yapeGatewayRes.data.receiver_phone || '+51 948 254 832',
-          receiverName: yapeGatewayRes.data.receiver_name || 'Glow with Pipo'
+          receiverName: yapeGatewayRes.data.receiver_name || 'Fabiana'
         }
       : {
           id: 'primary',
@@ -1550,7 +1550,7 @@ export async function fetchSupabaseDatabase() {
           batteryLevel: 95,
           notificationsEnabled: true,
           receiverPhone: '+51 948 254 832',
-          receiverName: 'Glow with Pipo'
+          receiverName: 'Fabiana'
         },
     yapeIncomingPayments: (yapeIncomingRes?.data || []).map((yip) => ({
       id: yip.id,
@@ -2899,7 +2899,7 @@ export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
       batteryLevel: 95,
       notificationsEnabled: true,
       receiverPhone: '+51 948 254 832',
-      receiverName: 'Glow with Pipo'
+      receiverName: 'Fabiana'
     }
   };
 }
@@ -2913,7 +2913,7 @@ export async function wakeAndCheckYapeGateway() {
       batteryLevel: 95,
       notificationsEnabled: true,
       receiverPhone: '+51 948 254 832',
-      receiverName: 'Glow with Pipo',
+      receiverName: 'Fabiana',
       checkedAt: new Date().toISOString()
     };
   }
@@ -2925,7 +2925,7 @@ export async function wakeAndCheckYapeGateway() {
       batteryLevel: 95,
       notificationsEnabled: true,
       receiverPhone: '+51 948 254 832',
-      receiverName: 'Glow with Pipo',
+      receiverName: 'Fabiana',
       checkedAt: new Date().toISOString()
     };
   }

@@ -1,7 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Calendar,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   ExternalLink,
   Eye,
@@ -47,14 +50,33 @@ export default function StorefrontAdminView({
   const [slotDate, setSlotDate] = useState('');
   const [slotMaxOrders, setSlotMaxOrders] = useState('15');
 
-  // Visual Curation State
+  // Visual Curation State & Pagination
   const [curationSearch, setCurationSearch] = useState('');
   const [curationFilter, setCurationFilter] = useState('ALL'); // 'ALL' | 'PRODUCTS' | 'COMBOS'
+  const [curationPage, setCurationPage] = useState(1);
+  const CURATION_PAGE_SIZE = 12;
+
   const [editingItem, setEditingItem] = useState(null);
   const [editImageUrl, setEditImageUrl] = useState('');
   const [editPublicDesc, setEditPublicDesc] = useState('');
   const [editIsVisible, setEditIsVisible] = useState(true);
   const [editIsFeatured, setEditIsFeatured] = useState(false);
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (editingItem) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [editingItem]);
+
+  // Reset pagination on filter or search change
+  useEffect(() => {
+    setCurationPage(1);
+  }, [curationSearch, curationFilter]);
 
   // Yape Simulator & Gateway State
   const [simSenderName, setSimSenderName] = useState('');
@@ -69,7 +91,7 @@ export default function StorefrontAdminView({
     batteryLevel: 95,
     notificationsEnabled: true,
     receiverPhone: '+51 948 254 832',
-    receiverName: 'Glow with Pipo'
+    receiverName: 'Fabiana'
   };
 
   const webOrders = useMemo(
@@ -199,6 +221,18 @@ export default function StorefrontAdminView({
     });
   }, [db.combos, curationFilter, curationSearch]);
 
+  const allCurationItems = useMemo(() => {
+    const combos = filteredCurationCombos.map((c) => ({ ...c, _curationType: 'combo' }));
+    const prods = filteredCurationProducts.map((p) => ({ ...p, _curationType: 'product' }));
+    return [...combos, ...prods];
+  }, [filteredCurationCombos, filteredCurationProducts]);
+
+  const totalCurationPages = Math.max(1, Math.ceil(allCurationItems.length / CURATION_PAGE_SIZE));
+  const paginatedCurationItems = useMemo(() => {
+    const start = (curationPage - 1) * CURATION_PAGE_SIZE;
+    return allCurationItems.slice(start, start + CURATION_PAGE_SIZE);
+  }, [allCurationItems, curationPage]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* Top Banner */}
@@ -252,8 +286,14 @@ export default function StorefrontAdminView({
             type="button"
             className={`btn ${subTab === 'yape' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
             onClick={() => setSubTab('yape')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            <Smartphone size={15} /> 3. Validador Yape &amp; Pedidos Web ({webOrders.length})
+            <img
+              src={`${import.meta.env.BASE_URL}yape-logo.png`}
+              alt="Yape"
+              style={{ height: 17, width: 'auto' }}
+            />
+            <span>3. Validador Yape &amp; Pedidos Web ({webOrders.length})</span>
           </button>
         </div>
       </div>
@@ -542,129 +582,177 @@ export default function StorefrontAdminView({
           </div>
 
           <div className="pipo-curation-grid">
-            {filteredCurationCombos.map((combo) => (
-              <div key={combo.id} className="pipo-curation-card">
-                <div className="pipo-curation-thumb">
-                  {combo.imageUrl ? (
-                    <img src={combo.imageUrl} alt={combo.name} />
-                  ) : (
-                    <span>🎁 Combo</span>
-                  )}
-                </div>
-                <div className="pipo-curation-info">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="badge badge-brand">COMBO</span>
-                    <strong>{combo.name}</strong>
-                  </div>
-                  <p style={{ margin: '4px 0', fontSize: '0.78rem', color: 'var(--pipo-muted)' }}>
-                    {combo.publicDescription || combo.description || 'Sin descripción pública'}
-                  </p>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => openCurationModal('combo', combo)}
-                    >
-                      <Image size={13} /> Personalizar Foto / Texto
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() =>
-                        onUpdateStorefrontMerchandising({
-                          entityType: 'combo',
-                          id: combo.id,
-                          isVisiblePublic: combo.isVisiblePublic === false
-                        })
-                      }
-                    >
-                      {combo.isVisiblePublic !== false ? (
-                        <>
-                          <Eye size={13} /> Visible en Web
-                        </>
+            {paginatedCurationItems.map((item) => {
+              if (item._curationType === 'combo') {
+                const combo = item;
+                return (
+                  <div key={`combo-${combo.id}`} className="pipo-curation-card">
+                    <div className="pipo-curation-thumb">
+                      {combo.imageUrl ? (
+                        <img src={combo.imageUrl} alt={combo.name} />
                       ) : (
-                        <>
-                          <EyeOff size={13} /> Oculto
-                        </>
+                        <span>🎁 Combo</span>
                       )}
-                    </button>
+                    </div>
+                    <div className="pipo-curation-info">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="badge badge-brand">COMBO</span>
+                        <strong>{combo.name}</strong>
+                      </div>
+                      <p style={{ margin: '4px 0', fontSize: '0.78rem', color: 'var(--pipo-muted)' }}>
+                        {combo.publicDescription || combo.description || 'Sin descripción pública'}
+                      </p>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => openCurationModal('combo', combo)}
+                        >
+                          <Image size={13} /> Personalizar Foto / Texto
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() =>
+                            onUpdateStorefrontMerchandising({
+                              entityType: 'combo',
+                              id: combo.id,
+                              isVisiblePublic: combo.isVisiblePublic === false
+                            })
+                          }
+                        >
+                          {combo.isVisiblePublic !== false ? (
+                            <>
+                              <Eye size={13} /> Visible en Web
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff size={13} /> Oculto
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                );
+              }
 
-            {filteredCurationProducts.map((prod) => (
-              <div key={prod.id} className="pipo-curation-card">
-                <div className="pipo-curation-thumb">
-                  {prod.imageUrl ? (
-                    <img src={prod.imageUrl} alt={prod.name} />
-                  ) : (
-                    <span>💄 Sin foto</span>
-                  )}
-                </div>
-                <div className="pipo-curation-info">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span className="badge badge-ok">{prod.category}</span>
-                    <strong style={{ color: 'var(--pipo-burgundy)' }}>{prod.name}</strong>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 800 }}>
-                      {formatMoney(prod.unitPrice)}
-                    </span>
+              const prod = item;
+              return (
+                <div key={`prod-${prod.id}`} className="pipo-curation-card">
+                  <div className="pipo-curation-thumb">
+                    {prod.imageUrl ? (
+                      <img src={prod.imageUrl} alt={prod.name} />
+                    ) : (
+                      <span>💄 Sin foto</span>
+                    )}
                   </div>
-                  <p style={{ margin: '4px 0', fontSize: '0.76rem', color: 'var(--pipo-muted)' }}>
-                    {prod.publicDescription || 'Usando vista coquette automática · Añade foto o reseña cuando gustes'}
-                  </p>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => openCurationModal('product', prod)}
-                    >
-                      <Image size={13} /> Subir Foto / Editar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() =>
-                        onUpdateStorefrontMerchandising({
-                          entityType: 'product',
-                          id: prod.id,
-                          isVisiblePublic: prod.isVisiblePublic === false
-                        })
-                      }
-                    >
-                      {prod.isVisiblePublic !== false ? (
-                        <>
-                          <Eye size={13} color="var(--status-ok-fg)" /> Visible
-                        </>
-                      ) : (
-                        <>
-                          <EyeOff size={13} /> Oculto
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() =>
-                        onUpdateStorefrontMerchandising({
-                          entityType: 'product',
-                          id: prod.id,
-                          isFeatured: !prod.isFeatured
-                        })
-                      }
-                    >
-                      <Star
-                        size={13}
-                        fill={prod.isFeatured ? '#e08398' : 'none'}
-                        color={prod.isFeatured ? '#722424' : 'currentColor'}
-                      />
-                      {prod.isFeatured ? 'Destacado' : 'Destacar'}
-                    </button>
+                  <div className="pipo-curation-info">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span className="badge badge-ok">{prod.category}</span>
+                      <strong style={{ color: 'var(--pipo-burgundy)' }}>{prod.name}</strong>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 800 }}>
+                        {formatMoney(prod.unitPrice)}
+                      </span>
+                    </div>
+                    <p style={{ margin: '4px 0', fontSize: '0.76rem', color: 'var(--pipo-muted)' }}>
+                      {prod.publicDescription || 'Usando vista coquette automática · Añade foto o reseña cuando gustes'}
+                    </p>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => openCurationModal('product', prod)}
+                      >
+                        <Image size={13} /> Subir Foto / Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() =>
+                          onUpdateStorefrontMerchandising({
+                            entityType: 'product',
+                            id: prod.id,
+                            isVisiblePublic: prod.isVisiblePublic === false
+                          })
+                        }
+                      >
+                        {prod.isVisiblePublic !== false ? (
+                          <>
+                            <Eye size={13} color="var(--status-ok-fg)" /> Visible
+                          </>
+                        ) : (
+                          <>
+                            <EyeOff size={13} /> Oculto
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() =>
+                          onUpdateStorefrontMerchandising({
+                            entityType: 'product',
+                            id: prod.id,
+                            isFeatured: !prod.isFeatured
+                          })
+                        }
+                      >
+                        <Star
+                          size={13}
+                          fill={prod.isFeatured ? '#e08398' : 'none'}
+                          color={prod.isFeatured ? '#722424' : 'currentColor'}
+                        />
+                        {prod.isFeatured ? 'Destacado' : 'Destacar'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+
+          {allCurationItems.length > 0 && (
+            <div className="pipo-pagination-bar">
+              <div className="pipo-pagination-info">
+                Mostrando {(curationPage - 1) * CURATION_PAGE_SIZE + 1}–
+                {Math.min(curationPage * CURATION_PAGE_SIZE, allCurationItems.length)} de{' '}
+                {allCurationItems.length} {allCurationItems.length === 1 ? 'ítem' : 'productos y combos'}
+              </div>
+              <div className="pipo-pagination-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={curationPage <= 1}
+                  onClick={() => setCurationPage((p) => Math.max(1, p - 1))}
+                  title="Página anterior"
+                >
+                  <ChevronLeft size={15} /> Anterior
+                </button>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {Array.from({ length: totalCurationPages }, (_, i) => i + 1).map((pg) => (
+                    <button
+                      key={pg}
+                      type="button"
+                      className={`pipo-page-pill ${curationPage === pg ? 'active' : ''}`}
+                      onClick={() => setCurationPage(pg)}
+                    >
+                      {pg}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={curationPage >= totalCurationPages}
+                  onClick={() => setCurationPage((p) => Math.min(totalCurationPages, p + 1))}
+                  title="Página siguiente"
+                >
+                  Siguiente <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -674,12 +762,19 @@ export default function StorefrontAdminView({
           {/* Left: Detector Status & Triple-Matching Test Simulator */}
           <div className="card">
             <div className="card-header">
-              <div>
-                <h2 className="card-title">💜 Estado del Detector Automático Yape</h2>
-                <p className="card-subtitle">
-                  Modo ahorro de batería activo: solo se despierta cuando un cliente entra al
-                  apartado de compra en la web.
-                </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <img
+                  src={`${import.meta.env.BASE_URL}yape-logo.png`}
+                  alt="Yape"
+                  style={{ height: 28, width: 'auto' }}
+                />
+                <div>
+                  <h2 className="card-title" style={{ margin: 0 }}>Estado del Detector Automático Yape</h2>
+                  <p className="card-subtitle" style={{ margin: '2px 0 0' }}>
+                    Modo ahorro de batería activo: solo se despierta cuando un cliente entra al
+                    apartado de compra en la web.
+                  </p>
+                </div>
               </div>
               <span className="badge badge-ok">
                 <Wifi size={12} style={{ marginRight: 4 }} /> Activo
@@ -857,99 +952,101 @@ export default function StorefrontAdminView({
       )}
 
       {/* Modal to Customize Product or Combo Photo & Description */}
-      {editingItem && (
-        <div className="modal-backdrop" onClick={() => setEditingItem(null)}>
-          <div
-            className="modal-panel"
-            style={{ maxWidth: 500 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div>
-                <span className="badge badge-brand">✨ Personalizar Vitrina Web</span>
-                <h3 style={{ margin: '4px 0 0', color: 'var(--pipo-burgundy)' }}>
-                  {editingItem.name}
-                </h3>
-              </div>
-            </div>
-
-            <form onSubmit={handleSaveCuration} className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div className="field">
-                <label>Subir fotografía desde tu celular o PC</label>
-                <input type="file" accept="image/*" onChange={handleImageFileUpload} />
+      {editingItem &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => setEditingItem(null)}>
+            <div
+              className="modal-panel"
+              style={{ maxWidth: 500 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div>
+                  <span className="badge badge-brand">✨ Personalizar Vitrina Web</span>
+                  <h3 style={{ margin: '4px 0 0', color: 'var(--pipo-burgundy)' }}>
+                    {editingItem.name}
+                  </h3>
+                </div>
               </div>
 
-              <div className="field">
-                <label>O pegar enlace directo de imagen (URL)</label>
-                <input
-                  type="text"
-                  placeholder="https://..."
-                  value={editImageUrl}
-                  onChange={(e) => setEditImageUrl(e.target.value)}
-                />
-              </div>
+              <form onSubmit={handleSaveCuration} className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="field">
+                  <label>Subir fotografía desde tu celular o PC</label>
+                  <input type="file" accept="image/*" onChange={handleImageFileUpload} />
+                </div>
 
-              {editImageUrl && (
-                <div style={{ textAlign: 'center' }}>
-                  <img
-                    src={editImageUrl}
-                    alt="Vista previa"
-                    style={{
-                      maxHeight: 150,
-                      borderRadius: 14,
-                      border: '1px solid var(--pipo-border)',
-                      objectFit: 'cover'
-                    }}
+                <div className="field">
+                  <label>O pegar enlace directo de imagen (URL)</label>
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={editImageUrl}
+                    onChange={(e) => setEditImageUrl(e.target.value)}
                   />
                 </div>
-              )}
 
-              <div className="field">
-                <label>Descripción atractiva para el cliente</label>
-                <textarea
-                  rows={3}
-                  placeholder="Ej. Acabado aterciopelado de larga duración, aroma dulce y textura ligera..."
-                  value={editPublicDesc}
-                  onChange={(e) => setEditPublicDesc(e.target.value)}
-                />
-              </div>
+                {editImageUrl && (
+                  <div style={{ textAlign: 'center' }}>
+                    <img
+                      src={editImageUrl}
+                      alt="Vista previa"
+                      style={{
+                        maxHeight: 150,
+                        borderRadius: 14,
+                        border: '1px solid var(--pipo-border)',
+                        objectFit: 'cover'
+                      }}
+                    />
+                  </div>
+                )}
 
-              <div style={{ display: 'flex', gap: 16 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={editIsVisible}
-                    onChange={(e) => setEditIsVisible(e.target.checked)}
+                <div className="field">
+                  <label>Descripción atractiva para el cliente</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Ej. Acabado aterciopelado de larga duración, aroma dulce y textura ligera..."
+                    value={editPublicDesc}
+                    onChange={(e) => setEditPublicDesc(e.target.value)}
                   />
-                  <span>Mostrar en la Tienda Web</span>
-                </label>
+                </div>
 
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={editIsFeatured}
-                    onChange={(e) => setEditIsFeatured(e.target.checked)}
-                  />
-                  <span>⭐ Marcar como Favorito</span>
-                </label>
-              </div>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={editIsVisible}
+                      onChange={(e) => setEditIsVisible(e.target.checked)}
+                    />
+                    <span>Mostrar en la Tienda Web</span>
+                  </label>
 
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setEditingItem(null)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  <CheckCircle2 size={16} /> Guardar en la Tienda Web
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={editIsFeatured}
+                      onChange={(e) => setEditIsFeatured(e.target.checked)}
+                    />
+                    <span>⭐ Marcar como Favorito</span>
+                  </label>
+                </div>
+
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setEditingItem(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    <CheckCircle2 size={16} /> Guardar en la Tienda Web
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
