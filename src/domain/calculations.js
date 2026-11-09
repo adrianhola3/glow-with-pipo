@@ -1,5 +1,13 @@
 import { DEFAULT_COMBO_RATIO } from './constants.js';
 
+export function normalizePaymentMethod(method) {
+  const m = String(method || '').trim().toLowerCase();
+  if (m === 'efectivo' || m === 'cash') return 'cash';
+  if (m === 'plin') return 'plin';
+  if (m === 'transfer' || m === 'transferencia') return 'transfer';
+  return 'yape';
+}
+
 export function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

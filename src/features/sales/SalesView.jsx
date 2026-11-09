@@ -22,6 +22,7 @@ import {
   formatCurrency,
   formatUnitCost,
   generateNextCode,
+  normalizePaymentMethod,
   roundMoney,
   toNumber
 } from '../../domain/calculations.js';
@@ -111,11 +112,13 @@ export default function SalesView({
   const [payMethod, setPayMethod] = useState('yape');
   const [payMarkDelivered, setPayMarkDelivered] = useState(true);
   const [payAdjustTotal, setPayAdjustTotal] = useState(false);
+  const [isSubmittingPay, setIsSubmittingPay] = useState(false);
 
   // Edit Sale Price Modal
   const [editingPriceSale, setEditingPriceSale] = useState(null);
   const [editPriceVal, setEditPriceVal] = useState('');
   const [editPriceNotes, setEditPriceNotes] = useState('');
+  const [isSubmittingPrice, setIsSubmittingPrice] = useState(false);
 
   // Voluntary Customer Directory Form
   const [dirId, setDirId] = useState(null);
@@ -1408,7 +1411,7 @@ export default function SalesView({
                           onClick={() => {
                             setPayingSale(sale);
                             setPayAmt(String(sale.balanceDue));
-                            setPayMethod((sale.notes || '').toLowerCase().includes('efectivo') ? 'efectivo' : 'yape');
+                            setPayMethod((sale.notes || '').toLowerCase().includes('efectivo') ? 'cash' : 'yape');
                             setPayMarkDelivered(true);
                             setPayAdjustTotal(false);
                           }}
@@ -1698,13 +1701,21 @@ export default function SalesView({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                await onAddPayment(payingSale.id, {
-                  amount: toNumber(payAmt, 0),
-                  method: payMethod,
-                  markDelivered: payMarkDelivered,
-                  adjustTotalCharged: payAdjustTotal
-                });
-                setPayingSale(null);
+                if (isSubmittingPay) return;
+                setIsSubmittingPay(true);
+                try {
+                  await onAddPayment(payingSale.id, {
+                    amount: toNumber(payAmt, 0),
+                    method: normalizePaymentMethod(payMethod),
+                    markDelivered: payMarkDelivered,
+                    adjustTotalCharged: payAdjustTotal
+                  });
+                  setPayingSale(null);
+                } catch {
+                  // Error manejado en notificación de la app
+                } finally {
+                  setIsSubmittingPay(false);
+                }
               }}
               style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
             >
@@ -1715,6 +1726,7 @@ export default function SalesView({
                   min="0.01"
                   step="0.01"
                   required
+                  disabled={isSubmittingPay}
                   value={payAmt}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -1734,6 +1746,7 @@ export default function SalesView({
                     <input
                       type="checkbox"
                       checked={payAdjustTotal}
+                      disabled={isSubmittingPay}
                       onChange={(e) => setPayAdjustTotal(e.target.checked)}
                       style={{ width: 17, height: 17, marginTop: 2 }}
                     />
@@ -1751,7 +1764,11 @@ export default function SalesView({
 
               <div className="field">
                 <label>Método con el que pagó</label>
-                <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
+                <select
+                  value={normalizePaymentMethod(payMethod)}
+                  onChange={(e) => setPayMethod(e.target.value)}
+                  disabled={isSubmittingPay}
+                >
                   {PAYMENT_METHODS.map((pm) => (
                     <option key={pm.id} value={pm.id}>
                       {pm.label}
@@ -1765,6 +1782,7 @@ export default function SalesView({
                   <input
                     type="checkbox"
                     checked={payMarkDelivered}
+                    disabled={isSubmittingPay}
                     onChange={(e) => setPayMarkDelivered(e.target.checked)}
                     style={{ width: 18, height: 18 }}
                   />
@@ -1773,11 +1791,40 @@ export default function SalesView({
               )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-                <button type="button" className="btn btn-ghost" onClick={() => setPayingSale(null)}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setPayingSale(null)}
+                  disabled={isSubmittingPay}
+                >
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  {payMarkDelivered ? 'Guardar y Liquidar Pedido' : 'Guardar Pago'}
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={isSubmittingPay}
+                  style={{ minWidth: 160 }}
+                >
+                  {isSubmittingPay ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{
+                          width: 14,
+                          height: 14,
+                          border: '2px solid rgba(255,255,255,0.4)',
+                          borderTopColor: '#fff',
+                          borderRadius: '50%',
+                          display: 'inline-block',
+                          animation: 'spin 0.6s linear infinite'
+                        }}
+                      />
+                      Guardando en Supabase...
+                    </span>
+                  ) : payMarkDelivered ? (
+                    'Guardar y Liquidar Pedido'
+                  ) : (
+                    'Guardar Pago'
+                  )}
                 </button>
               </div>
             </form>
@@ -1797,14 +1844,22 @@ export default function SalesView({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (onUpdateSalePrice) {
-                  await onUpdateSalePrice(
-                    editingPriceSale.id,
-                    toNumber(editPriceVal, editingPriceSale.totalCharged),
-                    editPriceNotes
-                  );
+                if (isSubmittingPrice) return;
+                setIsSubmittingPrice(true);
+                try {
+                  if (onUpdateSalePrice) {
+                    await onUpdateSalePrice(
+                      editingPriceSale.id,
+                      toNumber(editPriceVal, editingPriceSale.totalCharged),
+                      editPriceNotes
+                    );
+                  }
+                  setEditingPriceSale(null);
+                } catch {
+                  // Error handled by app toast
+                } finally {
+                  setIsSubmittingPrice(false);
                 }
-                setEditingPriceSale(null);
               }}
               style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
             >
@@ -1815,6 +1870,7 @@ export default function SalesView({
                   min="0"
                   step="0.01"
                   required
+                  disabled={isSubmittingPrice}
                   value={editPriceVal}
                   onChange={(e) => setEditPriceVal(e.target.value)}
                 />
@@ -1825,17 +1881,28 @@ export default function SalesView({
                 <input
                   type="text"
                   placeholder="Ej. Descuento acordado / Pago redondo"
+                  disabled={isSubmittingPrice}
                   value={editPriceNotes}
                   onChange={(e) => setEditPriceNotes(e.target.value)}
                 />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-                <button type="button" className="btn btn-ghost" onClick={() => setEditingPriceSale(null)}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setEditingPriceSale(null)}
+                  disabled={isSubmittingPrice}
+                >
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Actualizar Precio
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={isSubmittingPrice}
+                  style={{ minWidth: 150 }}
+                >
+                  {isSubmittingPrice ? 'Actualizando...' : 'Actualizar Precio'}
                 </button>
               </div>
             </form>

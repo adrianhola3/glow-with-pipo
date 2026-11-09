@@ -6,7 +6,8 @@ import {
   computeMargins,
   computePackageUnitCost,
   computeSaleTotals,
-  computeWeightedAverageCost
+  computeWeightedAverageCost,
+  normalizePaymentMethod
 } from '../src/domain/calculations.js';
 import {
   applyAddCategory,
@@ -307,6 +308,12 @@ test('Modificación de precio de venta a última hora y liquidación total al en
   assert.equal(db.sales[0].balanceDue, 0, 'No debe quedar saldo pendiente');
   assert.equal(db.sales[0].status, 'delivered', 'Debe quedar como entregado');
   assert.equal(db.sales[0].netProfit, 10, 'Ganancia neta debe recalcularse a 20 - 10 = 10');
+  assert.equal(db.sales[0].payments[0].method, 'cash', 'Debe normalizar efectivo a cash para respetar el check constraint de PostgreSQL');
+  assert.equal(normalizePaymentMethod('efectivo'), 'cash');
+  assert.equal(normalizePaymentMethod('Efectivo'), 'cash');
+  assert.equal(normalizePaymentMethod('transferencia'), 'transfer');
+  assert.equal(normalizePaymentMethod('plin'), 'plin');
+  assert.equal(normalizePaymentMethod('yape'), 'yape');
 
   // Caso 2: Modificación directa de precio con applyUpdateSalePrice
   db = applyUpdateSalePrice(db, sale.id, 22, 'Ajuste posterior');

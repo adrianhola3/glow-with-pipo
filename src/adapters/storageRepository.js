@@ -3,10 +3,13 @@ import {
   computeSaleTotals,
   computeWeightedAverageCost,
   generateNextCode,
+  normalizePaymentMethod,
   roundMoney,
   roundUnitCost,
   toNumber
 } from '../domain/calculations.js';
+
+export { normalizePaymentMethod };
 import { DEFAULT_COMBO_RATIO, PRODUCT_CATEGORIES } from '../domain/constants.js';
 
 const LOCAL_DB_KEY = 'glow_with_pipo_db_v1';
@@ -843,7 +846,7 @@ export function applyCreateSale(db, payload) {
       id: uid(),
       paymentDate: new Date().toISOString(),
       amount: roundMoney(payload.initialPaymentAmount),
-      method: payload.initialPaymentMethod || 'yape',
+      method: normalizePaymentMethod(payload.initialPaymentMethod),
       paymentConcept: payload.initialPaymentConcept || 'shipping_advance',
       note: (payload.initialPaymentNote || 'Pago inicial registrado al crear el pedido').trim()
     });
@@ -905,7 +908,7 @@ export function applyAddSalePayment(db, saleId, paymentPayload) {
     id: uid(),
     paymentDate: new Date().toISOString(),
     amount,
-    method: paymentPayload.method || 'yape',
+    method: normalizePaymentMethod(paymentPayload.method),
     paymentConcept: paymentPayload.paymentConcept || 'delivery_balance',
     note: (paymentPayload.note || '').trim()
   });
@@ -2600,7 +2603,7 @@ export async function cloudCreateSale(currentDb, payload) {
       id: uid(),
       paymentDate: new Date().toISOString(),
       amount: roundMoney(payload.initialPaymentAmount),
-      method: payload.initialPaymentMethod || 'yape',
+      method: normalizePaymentMethod(payload.initialPaymentMethod),
       paymentConcept: payload.initialPaymentConcept || 'shipping_advance',
       note: (payload.initialPaymentNote || 'Pago inicial registrado al crear el pedido').trim()
     });
@@ -2689,7 +2692,7 @@ export async function cloudCreateSale(currentDb, payload) {
         sale_id: saleId,
         payment_date: sp.paymentDate,
         amount: sp.amount,
-        method: sp.method,
+        method: normalizePaymentMethod(sp.method),
         payment_concept: sp.paymentConcept,
         note: sp.note || ''
       }))
@@ -2726,7 +2729,7 @@ export async function cloudAddSalePayment(saleId, paymentPayload) {
     sale_id: saleId,
     payment_date: new Date().toISOString(),
     amount,
-    method: paymentPayload.method || 'yape',
+    method: normalizePaymentMethod(paymentPayload.method),
     payment_concept: paymentPayload.paymentConcept || 'delivery_balance',
     note: (paymentPayload.note || '').trim()
   });
@@ -3149,7 +3152,7 @@ export async function syncStateToSupabase(db) {
         sale_id: s.id,
         payment_date: sp.paymentDate,
         amount: sp.amount,
-        method: sp.method,
+        method: normalizePaymentMethod(sp.method),
         payment_concept: sp.paymentConcept,
         note: sp.note || ''
       }))
