@@ -1127,6 +1127,10 @@ export function applyUpdateStorefrontMerchandising(db, payload) {
       next.products[idx] = {
         ...next.products[idx],
         imageUrl: payload.imageUrl !== undefined ? (payload.imageUrl || '').trim() : next.products[idx].imageUrl,
+        shadesImageUrl:
+          payload.shadesImageUrl !== undefined
+            ? (payload.shadesImageUrl || '').trim()
+            : (next.products[idx].shadesImageUrl || ''),
         publicDescription:
           payload.publicDescription !== undefined
             ? (payload.publicDescription || '').trim()
@@ -1135,6 +1139,18 @@ export function applyUpdateStorefrontMerchandising(db, payload) {
           payload.isVisiblePublic !== undefined ? Boolean(payload.isVisiblePublic) : next.products[idx].isVisiblePublic,
         isFeatured: payload.isFeatured !== undefined ? Boolean(payload.isFeatured) : next.products[idx].isFeatured
       };
+    }
+
+    if (payload.variantImages && typeof payload.variantImages === 'object') {
+      next.variants = (next.variants || []).map((v) => {
+        if (v.productId === payload.id && payload.variantImages[v.id] !== undefined) {
+          return {
+            ...v,
+            imageUrl: (payload.variantImages[v.id] || '').trim()
+          };
+        }
+        return v;
+      });
     }
   }
   return next;
@@ -1752,6 +1768,7 @@ export async function fetchSupabaseDatabase() {
       comboPrice: Number(p.combo_price),
       hasVariants: p.has_variants,
       imageUrl: p.image_url || '',
+      shadesImageUrl: p.shades_image_url || p.shadesImageUrl || '',
       galleryUrls: Array.isArray(p.gallery_urls) ? p.gallery_urls : [],
       publicDescription: p.public_description || '',
       isVisiblePublic: p.is_visible_public !== false,
@@ -1765,6 +1782,7 @@ export async function fetchSupabaseDatabase() {
       sku: v.sku,
       shadeName: v.shade_name,
       colorHex: v.color_hex || null,
+      imageUrl: v.image_url || v.imageUrl || '',
       stock: v.stock,
       unitCost: Number(v.unit_cost),
       createdAt: v.created_at
@@ -3239,9 +3257,33 @@ export async function cloudUpdateStorefrontMerchandising(payload) {
   if (payload.isFeatured !== undefined) {
     updateObj.is_featured = Boolean(payload.isFeatured);
   }
+  if (payload.entityType !== 'combo' && payload.shadesImageUrl !== undefined) {
+    updateObj.shades_image_url = (payload.shadesImageUrl || '').trim();
+  }
 
-  const { error } = await client.from(table).update(updateObj).eq('id', payload.id);
+  let { error } = await client.from(table).update(updateObj).eq('id', payload.id);
+  // Si la columna shades_image_url aún no existe en el esquema remoto, reintentar omitiéndola
+  if (error && (error.message?.includes('shades_image_url') || error.code === '42703')) {
+    delete updateObj.shades_image_url;
+    const retry = await client.from(table).update(updateObj).eq('id', payload.id);
+    error = retry.error;
+  }
   if (error) throw new Error(`Error al personalizar vitrina web: ${error.message}`);
+
+  // Actualizar fotos individuales de tonos/variantes si se enviaron
+  if (payload.entityType !== 'combo' && payload.variantImages && typeof payload.variantImages === 'object') {
+    for (const [varId, imgUrl] of Object.entries(payload.variantImages)) {
+      const cleanImg = (imgUrl || '').trim();
+      const { error: vErr } = await client
+        .from('product_variants')
+        .update({ image_url: cleanImg })
+        .eq('id', varId);
+      if (vErr && !vErr.message?.includes('image_url') && vErr.code !== '42703') {
+        console.warn('Advertencia al guardar foto de variante en Supabase:', vErr.message);
+      }
+    }
+  }
+
   return fetchSupabaseDatabase();
 }
 
@@ -3315,6 +3357,7 @@ export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
         comboPrice: p.comboPrice,
         hasVariants: p.hasVariants,
         imageUrl: p.imageUrl || '',
+        shadesImageUrl: p.shadesImageUrl || p.shades_image_url || '',
         galleryUrls: p.galleryUrls || [],
         publicDescription: p.publicDescription || '',
         isFeatured: Boolean(p.isFeatured),
@@ -3326,6 +3369,7 @@ export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
             sku: v.sku,
             shadeName: v.shadeName,
             colorHex: v.colorHex,
+            imageUrl: v.imageUrl || v.image_url || '',
             stock: v.stock
           }))
       })),

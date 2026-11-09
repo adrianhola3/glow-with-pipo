@@ -273,10 +273,14 @@ end $$;
 -- 9.1 Storefront Merchandising Fields on Products & Combos
 alter table public.products
   add column if not exists image_url text default '',
+  add column if not exists shades_image_url text default '',
   add column if not exists gallery_urls text[] default '{}',
   add column if not exists public_description text default '',
   add column if not exists is_visible_public boolean not null default true,
   add column if not exists is_featured boolean not null default false;
+
+alter table public.product_variants
+  add column if not exists image_url text default '';
 
 alter table public.combos
   add column if not exists image_url text default '',
@@ -450,6 +454,7 @@ begin
           'comboPrice', p.combo_price,
           'hasVariants', p.has_variants,
           'imageUrl', coalesce(p.image_url, ''),
+          'shadesImageUrl', coalesce(p.shades_image_url, ''),
           'galleryUrls', coalesce(p.gallery_urls, '{}'),
           'publicDescription', coalesce(p.public_description, ''),
           'isVisiblePublic', coalesce(p.is_visible_public, true),
@@ -467,6 +472,7 @@ begin
           'sku', v.sku,
           'shadeName', v.shade_name,
           'colorHex', v.color_hex,
+          'imageUrl', coalesce(v.image_url, ''),
           'stock', v.stock
         ) order by v.created_at asc
       )

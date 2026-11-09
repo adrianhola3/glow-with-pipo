@@ -57,7 +57,10 @@ export default function StorefrontAdminView({
   const CURATION_PAGE_SIZE = 12;
 
   const [editingItem, setEditingItem] = useState(null);
+  const [curationActiveTab, setCurationActiveTab] = useState('main'); // 'main' | 'shades'
   const [editImageUrl, setEditImageUrl] = useState('');
+  const [editShadesImageUrl, setEditShadesImageUrl] = useState('');
+  const [editVariantImages, setEditVariantImages] = useState({});
   const [editPublicDesc, setEditPublicDesc] = useState('');
   const [editIsVisible, setEditIsVisible] = useState(true);
   const [editIsFeatured, setEditIsFeatured] = useState(false);
@@ -148,8 +151,20 @@ export default function StorefrontAdminView({
   }
 
   function openCurationModal(entityType, item) {
-    setEditingItem({ entityType, ...item });
+    const itemVariants =
+      entityType === 'product'
+        ? (db.variants || []).filter((v) => v.productId === item.id)
+        : [];
+    const varImgMap = {};
+    itemVariants.forEach((v) => {
+      varImgMap[v.id] = v.imageUrl || '';
+    });
+
+    setEditingItem({ entityType, ...item, _variants: itemVariants });
+    setCurationActiveTab('main');
     setEditImageUrl(item.imageUrl || '');
+    setEditShadesImageUrl(item.shadesImageUrl || '');
+    setEditVariantImages(varImgMap);
     setEditPublicDesc(item.publicDescription || item.description || '');
     setEditIsVisible(item.isVisiblePublic !== false);
     setEditIsFeatured(Boolean(item.isFeatured));
@@ -167,6 +182,33 @@ export default function StorefrontAdminView({
     reader.readAsDataURL(file);
   }
 
+  function handleShadesImageFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEditShadesImageUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleVariantImageFileUpload(varId, e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setEditVariantImages((prev) => ({
+          ...prev,
+          [varId]: reader.result
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
   function handleSaveCuration(e) {
     e.preventDefault();
     if (!editingItem) return;
@@ -174,6 +216,8 @@ export default function StorefrontAdminView({
       entityType: editingItem.entityType,
       id: editingItem.id,
       imageUrl: editImageUrl.trim(),
+      shadesImageUrl: editShadesImageUrl.trim(),
+      variantImages: editVariantImages,
       publicDescription: editPublicDesc.trim(),
       isVisiblePublic: editIsVisible,
       isFeatured: editIsFeatured
@@ -957,7 +1001,7 @@ export default function StorefrontAdminView({
           <div className="modal-backdrop" onClick={() => setEditingItem(null)}>
             <div
               className="modal-panel"
-              style={{ maxWidth: 500 }}
+              style={{ maxWidth: 620, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
@@ -969,68 +1013,274 @@ export default function StorefrontAdminView({
                 </div>
               </div>
 
-              <form onSubmit={handleSaveCuration} className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div className="field">
-                  <label>Subir fotografía desde tu celular o PC</label>
-                  <input type="file" accept="image/*" onChange={handleImageFileUpload} />
+              {/* Subtabs for products with variants/swatches */}
+              {editingItem.entityType === 'product' && (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    padding: '8px 24px 0',
+                    borderBottom: '1px solid var(--pipo-border)'
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${curationActiveTab === 'main' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setCurationActiveTab('main')}
+                  >
+                    📸 Foto Principal y Datos
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${curationActiveTab === 'shades' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setCurationActiveTab('shades')}
+                  >
+                    💄 Muestrario y Fotos de Tonos {editingItem._variants?.length ? `(${editingItem._variants.length})` : ''}
+                  </button>
                 </div>
+              )}
 
-                <div className="field">
-                  <label>O pegar enlace directo de imagen (URL)</label>
-                  <input
-                    type="text"
-                    placeholder="https://..."
-                    value={editImageUrl}
-                    onChange={(e) => setEditImageUrl(e.target.value)}
-                  />
-                </div>
+              <form
+                onSubmit={handleSaveCuration}
+                className="modal-body"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 14,
+                  overflowY: 'auto',
+                  flex: 1,
+                  padding: 24
+                }}
+              >
+                {curationActiveTab === 'main' ? (
+                  <>
+                    <div className="field">
+                      <label>Foto comercial principal (Portada)</label>
+                      <input type="file" accept="image/*" onChange={handleImageFileUpload} />
+                    </div>
 
-                {editImageUrl && (
-                  <div style={{ textAlign: 'center' }}>
-                    <img
-                      src={editImageUrl}
-                      alt="Vista previa"
+                    <div className="field">
+                      <label>O pegar enlace directo de imagen principal (URL)</label>
+                      <input
+                        type="text"
+                        placeholder="https://..."
+                        value={editImageUrl}
+                        onChange={(e) => setEditImageUrl(e.target.value)}
+                      />
+                    </div>
+
+                    {editImageUrl && (
+                      <div style={{ textAlign: 'center' }}>
+                        <img
+                          src={editImageUrl}
+                          alt="Vista previa comercial"
+                          style={{
+                            maxHeight: 140,
+                            borderRadius: 14,
+                            border: '1px solid var(--pipo-border)',
+                            objectFit: 'cover'
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    <div className="field">
+                      <label>Descripción atractiva para el cliente</label>
+                      <textarea
+                        rows={3}
+                        placeholder="Ej. Acabado aterciopelado de larga duración, aroma dulce y textura ligera..."
+                        value={editPublicDesc}
+                        onChange={(e) => setEditPublicDesc(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editIsVisible}
+                          onChange={(e) => setEditIsVisible(e.target.checked)}
+                        />
+                        <span>Mostrar en la Tienda Web</span>
+                      </label>
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={editIsFeatured}
+                          onChange={(e) => setEditIsFeatured(e.target.checked)}
+                        />
+                        <span>⭐ Marcar como Favorito</span>
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* General Shades / Swatch Chart Section */}
+                    <div
                       style={{
-                        maxHeight: 150,
-                        borderRadius: 14,
+                        background: 'var(--pipo-ivory)',
                         border: '1px solid var(--pipo-border)',
-                        objectFit: 'cover'
+                        borderRadius: 14,
+                        padding: 14
                       }}
-                    />
-                  </div>
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <Sparkles size={16} color="var(--pipo-burgundy)" />
+                        <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '0.95rem' }}>
+                          Foto General de Muestrario de Tonos (Swatches)
+                        </strong>
+                      </div>
+                      <p style={{ margin: '0 0 10px', fontSize: '0.82rem', color: 'var(--pipo-muted)' }}>
+                        Sube una foto donde aparezcan <strong>todos los tonos juntos</strong> aplicados en piel o labios. Se mostrará a todas las clientas en la vista de detalle.
+                      </p>
+
+                      <div className="field" style={{ marginBottom: 8 }}>
+                        <input type="file" accept="image/*" onChange={handleShadesImageFileUpload} />
+                      </div>
+                      <div className="field" style={{ marginBottom: 8 }}>
+                        <input
+                          type="text"
+                          placeholder="O pegar URL del muestrario general (https://...)"
+                          value={editShadesImageUrl}
+                          onChange={(e) => setEditShadesImageUrl(e.target.value)}
+                        />
+                      </div>
+
+                      {editShadesImageUrl && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                          <img
+                            src={editShadesImageUrl}
+                            alt="Muestrario general"
+                            style={{
+                              height: 80,
+                              borderRadius: 10,
+                              border: '1px solid var(--pipo-border)',
+                              objectFit: 'cover'
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setEditShadesImageUrl('')}
+                            style={{ color: 'var(--pipo-rose)' }}
+                          >
+                            <Trash2 size={14} /> Quitar foto de muestrario
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Specific Per-Shade Photos Section */}
+                    {editingItem._variants && editingItem._variants.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ marginBottom: 8 }}>
+                          <strong style={{ color: 'var(--pipo-burgundy)', fontSize: '0.92rem' }}>
+                            Fotos Específicas por Tono Individual
+                          </strong>
+                          <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: 'var(--pipo-muted)' }}>
+                            Al seleccionar el tono en la tienda web, la clienta verá exactamente esta foto real.
+                          </p>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {editingItem._variants.map((v) => {
+                            const curImg = editVariantImages[v.id] || '';
+                            return (
+                              <div
+                                key={v.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 12,
+                                  padding: '8px 12px',
+                                  background: '#ffffff',
+                                  border: '1px solid var(--pipo-border)',
+                                  borderRadius: 12,
+                                  fontSize: '0.85rem'
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                                  {v.colorHex ? (
+                                    <span
+                                      style={{
+                                        display: 'inline-block',
+                                        width: 22,
+                                        height: 22,
+                                        borderRadius: '50%',
+                                        backgroundColor: v.colorHex,
+                                        border: '1px solid rgba(0,0,0,0.15)',
+                                        flexShrink: 0
+                                      }}
+                                    />
+                                  ) : (
+                                    <span style={{ fontSize: '1.1rem' }}>💄</span>
+                                  )}
+                                  <div>
+                                    <strong style={{ color: 'var(--pipo-burgundy)' }}>{v.shadeName}</strong>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--pipo-muted)' }}>
+                                      Stock: {v.stock} disp.
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  {curImg ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <img
+                                        src={curImg}
+                                        alt={v.shadeName}
+                                        style={{
+                                          width: 44,
+                                          height: 44,
+                                          borderRadius: 8,
+                                          objectFit: 'cover',
+                                          border: '1px solid var(--pipo-border)'
+                                        }}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        onClick={() =>
+                                          setEditVariantImages((prev) => ({ ...prev, [v.id]: '' }))
+                                        }
+                                        title="Quitar foto de este tono"
+                                        style={{ padding: 4 }}
+                                      >
+                                        <X size={15} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <label
+                                      className="btn btn-ghost btn-sm"
+                                      style={{
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 4
+                                      }}
+                                    >
+                                      <Upload size={14} /> Subir foto
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        style={{ display: 'none' }}
+                                        onChange={(e) => handleVariantImageFileUpload(v.id, e)}
+                                      />
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
 
-                <div className="field">
-                  <label>Descripción atractiva para el cliente</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Ej. Acabado aterciopelado de larga duración, aroma dulce y textura ligera..."
-                    value={editPublicDesc}
-                    onChange={(e) => setEditPublicDesc(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: 16 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={editIsVisible}
-                      onChange={(e) => setEditIsVisible(e.target.checked)}
-                    />
-                    <span>Mostrar en la Tienda Web</span>
-                  </label>
-
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={editIsFeatured}
-                      onChange={(e) => setEditIsFeatured(e.target.checked)}
-                    />
-                    <span>⭐ Marcar como Favorito</span>
-                  </label>
-                </div>
-
-                <div className="modal-footer">
+                <div className="modal-footer" style={{ marginTop: 12 }}>
                   <button
                     type="button"
                     className="btn btn-ghost"

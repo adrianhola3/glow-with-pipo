@@ -651,6 +651,10 @@ test('Storefront visual merchandising updates photos, descriptions, visibility a
     entityType: 'product',
     id: product.id,
     imageUrl: 'https://example.com/fresa.jpg',
+    shadesImageUrl: 'https://example.com/swatches-all.jpg',
+    variantImages: {
+      [db.variants[0].id]: 'https://example.com/shade-01.jpg'
+    },
     publicDescription: 'Aroma dulce a fresas silvestres y acabado espejo.',
     isVisiblePublic: true,
     isFeatured: true
@@ -658,8 +662,10 @@ test('Storefront visual merchandising updates photos, descriptions, visibility a
 
   const updated = db.products[0];
   assert.equal(updated.imageUrl, 'https://example.com/fresa.jpg');
+  assert.equal(updated.shadesImageUrl, 'https://example.com/swatches-all.jpg');
   assert.equal(updated.publicDescription, 'Aroma dulce a fresas silvestres y acabado espejo.');
   assert.equal(updated.isFeatured, true);
+  assert.equal(db.variants[0].imageUrl, 'https://example.com/shade-01.jpg');
 });
 
 
