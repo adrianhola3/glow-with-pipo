@@ -858,8 +858,8 @@ export default function App() {
                   const res = await cloudSimulateOrRegisterYapePayment(payload);
                   setDb(res.db);
                   saveLocalDb(res.db);
-                  if (res.matchResult?.matched) {
-                    notify(`¡Yape validado y vinculado al pedido ${res.matchResult.matched_sale_code}!`);
+                  if (res.matchResult?.autoVerified || res.matchResult?.matched) {
+                    notify(`¡Yape validado y vinculado al pedido ${res.matchResult.matchedSaleCode || res.matchResult.matched_sale_code}!`);
                   } else {
                     notify('Notificación Yape registrada en el sistema.');
                   }

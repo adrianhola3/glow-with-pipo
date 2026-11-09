@@ -2975,10 +2975,10 @@ export async function cloudSimulateOrRegisterYapePayment({
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase no disponible.');
   const { data, error } = await client.rpc('register_incoming_yape_notification', {
-    p_sender_full_name: (senderName || '').trim(),
-    p_amount: roundMoney(amount),
-    p_operation_code: (operationCode || '').trim(),
-    p_raw_text: (rawText || `Yape! ${(senderName || '').trim()} te envió un pago por S/ ${roundMoney(amount)}`).trim()
+    sender_name: (senderName || '').trim(),
+    payment_amount: roundMoney(amount),
+    op_code: (operationCode || '').trim(),
+    raw_text: (rawText || `Yape! ${(senderName || '').trim()} te envió un pago por S/ ${roundMoney(amount)}`).trim()
   });
   if (error) throw new Error(`Error al registrar notificación Yape: ${error.message}`);
   const freshDb = await fetchSupabaseDatabase();
