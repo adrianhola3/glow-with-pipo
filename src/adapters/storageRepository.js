@@ -17,6 +17,7 @@ export const LAST_ACTIVITY_KEY = 'glow_with_pipo_last_activity_v1';
 export const DEFAULT_SESSION_TIMEOUT_MINUTES = 30; // 30 minutos de inactividad estándar
 export const AUTO_SNAPSHOT_PREFIX = 'glow_pipo_backup_auto_';
 export const MAX_AUTO_SNAPSHOTS = 5;
+let autoSnapshotSequence = 0;
 
 export const DEFAULT_SUPABASE_URL = 'https://fpahqojoqjrrthlwland.supabase.co';
 export const DEFAULT_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_olRnMcbKMUDGHcnCfcB0tg_fQsQob4W';
@@ -159,10 +160,10 @@ export function saveLocalDb(db) {
   if (hasBrowserStorage()) {
     try {
       localStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
-      // Auto-snapshot rotativo (últimos 5 estados sanos)
+      // Auto-snapshot rotativo (últimos 5 estados sanos) con secuencia monótona
       const now = Date.now();
-      const rand = Math.random().toString(36).slice(2, 6);
-      const snapshotKey = `${AUTO_SNAPSHOT_PREFIX}${now}_${rand}`;
+      const seq = String(++autoSnapshotSequence).padStart(8, '0');
+      const snapshotKey = `${AUTO_SNAPSHOT_PREFIX}${now}_${seq}`;
       localStorage.setItem(snapshotKey, JSON.stringify(db));
 
       const keys = [];
@@ -196,7 +197,10 @@ export function listAutoSnapshots() {
         list.push({ key: k, timestamp: ts, date: new Date(ts).toLocaleString() });
       }
     }
-    list.sort((a, b) => b.timestamp - a.timestamp);
+    list.sort((a, b) => {
+      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+      return b.key.localeCompare(a.key);
+    });
   } catch {}
   return list;
 }
