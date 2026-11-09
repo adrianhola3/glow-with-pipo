@@ -877,12 +877,12 @@ select:hover,
   background: rgba(61, 41, 39, 0.55);
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 16px;
+  display: grid !important;
+  place-items: center !important;
+  padding: 24px 16px;
   z-index: 99999 !important;
-  overflow-y: auto;
+  overflow-y: auto !important;
+  box-sizing: border-box !important;
   animation: pipoFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
