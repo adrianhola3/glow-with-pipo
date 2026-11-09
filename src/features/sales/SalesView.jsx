@@ -68,6 +68,7 @@ export default function SalesView({
   onCreateSale,
   onAddPayment,
   onChangeSaleStatus,
+  onDeleteSale,
   onSaveCustomer,
   onDeleteCustomer
 }) {
@@ -1409,6 +1410,23 @@ export default function SalesView({
                           <XCircle size={14} /> Cancelar (devolver stock)
                         </button>
                       )}
+
+                      {onDeleteSale && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--status-danger-fg)' }}
+                          title="Eliminar pedido permanentemente"
+                          onClick={() => {
+                            const extra = sale.status !== 'cancelled' ? ' Se devolverá el stock reservado.' : '';
+                            if (window.confirm(`¿Eliminar permanentemente el pedido "${sale.code}"?${extra}`)) {
+                              onDeleteSale(sale.id);
+                            }
+                          }}
+                        >
+                          <Trash2 size={14} /> Eliminar
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1582,19 +1600,29 @@ export default function SalesView({
                               >
                                 <Pencil size={14} /> Editar
                               </button>
-                              {onDeleteCustomer && ordersCount === 0 && (
+                              {onDeleteCustomer && (
                                 <button
                                   type="button"
                                   className="btn btn-ghost btn-sm"
                                   style={{ color: '#c53030' }}
-                                  title="Eliminar cliente sin pedidos"
+                                  title="Eliminar cliente del listado"
                                   onClick={() => {
-                                    if (window.confirm(`¿Eliminar al cliente "${c.name}"?`)) {
-                                      onDeleteCustomer(c.id);
+                                    if (ordersCount > 0) {
+                                      if (
+                                        window.confirm(
+                                          `El cliente "${c.name}" tiene ${ordersCount} pedido(s) registrado(s). ¿Deseas eliminar a este cliente y todos sus pedidos asociados devolviendo el stock reservado?`
+                                        )
+                                      ) {
+                                        onDeleteCustomer(c.id, { cascadeSales: true });
+                                      }
+                                    } else {
+                                      if (window.confirm(`¿Eliminar al cliente "${c.name}" del listado?`)) {
+                                        onDeleteCustomer(c.id);
+                                      }
                                     }
                                   }}
                                 >
-                                  <Trash2 size={14} />
+                                  <Trash2 size={14} /> Eliminar
                                 </button>
                               )}
                             </div>

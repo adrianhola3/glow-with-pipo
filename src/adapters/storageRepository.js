@@ -712,13 +712,49 @@ export function applyCreateOrUpdateCustomer(db, payload) {
   return { db: next, customer };
 }
 
-export function applyDeleteCustomer(db, customerId) {
+export function applyDeleteCustomer(db, customerId, options = {}) {
   const next = structuredClone(db);
-  const hasSales = next.sales.some((s) => s.customerId === customerId);
-  if (hasSales) {
-    throw new Error('No se puede eliminar un cliente con pedidos registrados.');
+  const custSales = next.sales.filter((s) => s.customerId === customerId);
+  if (custSales.length > 0) {
+    if (options.cascadeSales) {
+      for (const sale of custSales) {
+        if (sale.status !== 'cancelled') {
+          for (const item of sale.items || []) {
+            const vIdx = next.variants.findIndex((v) => v.id === item.variantId);
+            if (vIdx >= 0) next.variants[vIdx].stock += item.quantity;
+          }
+          for (const sup of sale.suppliesUsed || []) {
+            const sIdx = next.supplies.findIndex((s) => s.id === sup.supplyId);
+            if (sIdx >= 0) next.supplies[sIdx].stock += sup.quantity;
+          }
+        }
+      }
+      next.sales = next.sales.filter((s) => s.customerId !== customerId);
+    } else {
+      throw new Error('No se puede eliminar un cliente con pedidos registrados.');
+    }
   }
   next.customers = next.customers.filter((c) => c.id !== customerId);
+  return next;
+}
+
+export function applyDeleteSale(db, saleId) {
+  const next = structuredClone(db);
+  const idx = next.sales.findIndex((s) => s.id === saleId);
+  if (idx < 0) return next;
+
+  const sale = next.sales[idx];
+  if (sale.status !== 'cancelled') {
+    for (const item of sale.items || []) {
+      const vIdx = next.variants.findIndex((v) => v.id === item.variantId);
+      if (vIdx >= 0) next.variants[vIdx].stock += item.quantity;
+    }
+    for (const sup of sale.suppliesUsed || []) {
+      const sIdx = next.supplies.findIndex((s) => s.id === sup.supplyId);
+      if (sIdx >= 0) next.supplies[sIdx].stock += sup.quantity;
+    }
+  }
+  next.sales.splice(idx, 1);
   return next;
 }
 
@@ -2108,14 +2144,68 @@ export async function cloudSaveCustomer(currentDb, payload) {
   return fetchSupabaseDatabase();
 }
 
-export async function cloudDeleteCustomer(customerId) {
+export async function cloudDeleteCustomer(customerId, options = {}) {
   const client = getSupabaseClient();
+  if (options.cascadeSales) {
+    const { data: sales } = await client.from('sales').select('id, status').eq('customer_id', customerId);
+    for (const s of sales || []) {
+      if (s.status !== 'cancelled') {
+        const { data: saleItems } = await client.from('sale_items').select('variant_id, quantity').eq('sale_id', s.id);
+        for (const item of saleItems || []) {
+          if (!item.variant_id) continue;
+          const { data: v } = await client.from('product_variants').select('stock').eq('id', item.variant_id).single();
+          if (v) {
+            await client.from('product_variants').update({ stock: v.stock + item.quantity }).eq('id', item.variant_id);
+          }
+        }
+      }
+      await client.from('sales').delete().eq('id', s.id);
+    }
+  }
+
   const { error } = await client.from('customers').delete().eq('id', customerId);
   if (error) {
     if (error.code === '23503') {
-      throw new Error('No se puede eliminar un cliente que ya tiene ventas registradas.');
+      throw new Error('No se puede eliminar un cliente que ya tiene pedidos registrados sin eliminarlos primero.');
     }
     throw new Error(`Error al eliminar cliente: ${error.message}`);
+  }
+  return fetchSupabaseDatabase();
+}
+
+export async function cloudDeleteSale(saleId) {
+  const client = getSupabaseClient();
+  const { data: saleRow, error: sErr } = await client
+    .from('sales')
+    .select('id, status')
+    .eq('id', saleId)
+    .single();
+
+  if (saleRow && saleRow.status !== 'cancelled') {
+    const { data: saleItems } = await client
+      .from('sale_items')
+      .select('variant_id, quantity')
+      .eq('sale_id', saleId);
+
+    for (const item of saleItems || []) {
+      if (!item.variant_id) continue;
+      const { data: v } = await client
+        .from('product_variants')
+        .select('stock')
+        .eq('id', item.variant_id)
+        .single();
+      if (v) {
+        await client
+          .from('product_variants')
+          .update({ stock: v.stock + item.quantity })
+          .eq('id', item.variant_id);
+      }
+    }
+  }
+
+  const { error: delErr } = await client.from('sales').delete().eq('id', saleId);
+  if (delErr) {
+    throw new Error(`Error al eliminar pedido: ${delErr.message}`);
   }
   return fetchSupabaseDatabase();
 }

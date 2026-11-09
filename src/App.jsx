@@ -27,6 +27,7 @@ import {
   applyDeleteDeliveryPoint,
   applyDeleteDeliverySlot,
   applyDeleteProduct,
+  applyDeleteSale,
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
@@ -45,6 +46,7 @@ import {
   cloudDeleteDeliveryPoint,
   cloudDeleteDeliverySlot,
   cloudDeleteProduct,
+  cloudDeleteSale,
   cloudDeleteSupplier,
   cloudDeleteSupply,
   cloudRecordRestock,
@@ -721,11 +723,18 @@ export default function App() {
                   successMsg: 'Cliente guardado en el directorio.'
                 })
               }
-              onDeleteCustomer={(customerId) =>
+              onDeleteCustomer={(customerId, options) =>
                 commitMutation({
-                  optimisticFn: (cur) => applyDeleteCustomer(cur, customerId),
-                  cloudFn: () => cloudDeleteCustomer(customerId),
+                  optimisticFn: (cur) => applyDeleteCustomer(cur, customerId, options),
+                  cloudFn: () => cloudDeleteCustomer(customerId, options),
                   successMsg: 'Cliente eliminado del directorio.'
+                })
+              }
+              onDeleteSale={(saleId) =>
+                commitMutation({
+                  optimisticFn: (cur) => applyDeleteSale(cur, saleId),
+                  cloudFn: () => cloudDeleteSale(saleId),
+                  successMsg: 'Pedido eliminado permanentemente.'
                 })
               }
             />
