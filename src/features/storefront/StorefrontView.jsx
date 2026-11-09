@@ -106,9 +106,37 @@ export default function StorefrontView({
     setLoadingCatalog(true);
     try {
       const data = await fetchPublicStorefrontCatalog(fallbackDb);
-      setCatalog(data);
+      const variantsByProd = new Map();
+      for (const v of data.variants || []) {
+        const arr = variantsByProd.get(v.productId) || [];
+        arr.push(v);
+        variantsByProd.set(v.productId, arr);
+      }
+      const productsWithVariants = (data.products || []).map((p) => ({
+        ...p,
+        variants: p.variants && p.variants.length > 0 ? p.variants : (variantsByProd.get(p.id) || [])
+      }));
+
+      // Extract delivery slots either from flat list or from each delivery point's nested slots
+      const points = data.deliveryPoints || [];
+      const extractedSlots =
+        data.deliverySlots && data.deliverySlots.length > 0
+          ? data.deliverySlots
+          : points.flatMap((pt) =>
+              (pt.slots || []).map((sl) => ({ ...sl, deliveryPointId: pt.id }))
+            );
+
+      const normalizedCatalog = {
+        ...data,
+        products: productsWithVariants,
+        deliveryPoints: points,
+        deliverySlots: extractedSlots
+      };
+
+      setCatalog(normalizedCatalog);
+
       const initialVariants = {};
-      for (const prod of data.products || []) {
+      for (const prod of productsWithVariants) {
         const availableVar =
           (prod.variants || []).find((v) => v.stock > 0) || (prod.variants || [])[0];
         if (availableVar) {
@@ -116,8 +144,8 @@ export default function StorefrontView({
         }
       }
       setSelectedVariantByProduct((prev) => ({ ...initialVariants, ...prev }));
-      if ((data.deliveryPoints || []).length > 0) {
-        setSelectedPointId((prev) => prev || data.deliveryPoints[0].id);
+      if (points.length > 0) {
+        setSelectedPointId((prev) => prev || points[0].id);
       }
     } finally {
       setLoadingCatalog(false);
