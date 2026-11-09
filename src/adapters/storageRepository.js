@@ -123,9 +123,13 @@ export function getSupabaseClient() {
       }
     });
     if (hasBrowserStorage()) {
-      cachedSupabase.auth.onAuthStateChange((_event, authSession) => {
+      cachedSupabase.auth.onAuthStateChange((event, authSession) => {
         if (authSession?.access_token) {
-          cachedSupabase.realtime.setAuth(authSession.access_token);
+          try {
+            cachedSupabase.realtime.setAuth(authSession.access_token);
+          } catch {}
+        } else if (event === 'SIGNED_OUT') {
+          notifySessionExpired();
         }
       });
     }
@@ -1198,6 +1202,95 @@ export function getSavedSession() {
   }
 }
 
+const sessionExpiredListeners = new Set();
+
+export function onSessionExpired(callback) {
+  if (typeof callback === 'function') {
+    sessionExpiredListeners.add(callback);
+    return () => sessionExpiredListeners.delete(callback);
+  }
+  return () => {};
+}
+
+export function notifySessionExpired() {
+  for (const cb of sessionExpiredListeners) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
+export function isAuthPermissionError(err) {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  const code = String(err.code || '').toLowerCase();
+  const status = Number(err.status || 0);
+  return (
+    code === '42501' ||
+    status === 401 ||
+    status === 403 ||
+    msg.includes('permission denied') ||
+    msg.includes('jwt expired') ||
+    msg.includes('invalid jwt') ||
+    msg.includes('token is expired') ||
+    msg.includes('invalid refresh token') ||
+    msg.includes('row-level security') ||
+    msg.includes('auth_session_expired')
+  );
+}
+
+export async function ensureFreshSupabaseSession() {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+    const currentSession = sessionData?.session;
+
+    if (sessionErr || !currentSession) {
+      // Intentar refresco reactivo con refresh token almacenado
+      const { data: refreshData, error: refreshErr } = await client.auth
+        .refreshSession()
+        .catch(() => ({ data: null, error: true }));
+      if (!refreshErr && refreshData?.session?.user) {
+        if (refreshData.session.access_token) {
+          try {
+            client.realtime.setAuth(refreshData.session.access_token);
+          } catch {}
+        }
+        return refreshData.session;
+      }
+      return null;
+    }
+
+    // Refrescar proactivamente si expira en menos de 90 segundos o ya expiró
+    const expiresAt = currentSession.expires_at;
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (expiresAt && expiresAt - nowSec < 90) {
+      const { data: refreshed, error: refErr } = await client.auth
+        .refreshSession()
+        .catch(() => ({ data: null, error: true }));
+      if (!refErr && refreshed?.session) {
+        if (refreshed.session.access_token) {
+          try {
+            client.realtime.setAuth(refreshed.session.access_token);
+          } catch {}
+        }
+        return refreshed.session;
+      }
+    }
+
+    if (currentSession.access_token) {
+      try {
+        client.realtime.setAuth(currentSession.access_token);
+      } catch {}
+    }
+    return currentSession;
+  } catch {
+    return null;
+  }
+}
+
 export async function restoreSupabaseSession() {
   if (isSessionExpired()) {
     await signOutApp();
@@ -1207,18 +1300,25 @@ export async function restoreSupabaseSession() {
   if (!client) return getSavedSession();
 
   try {
-    const { data, error } = await client.auth.getSession();
-    if (!error && data?.session?.user) {
+    const freshSession = await ensureFreshSupabaseSession();
+    if (freshSession?.user) {
       if (isSessionExpired()) {
         await signOutApp();
         return null;
       }
-      client.realtime.setAuth(data.session.access_token);
-      const user = data.session.user;
+      if (freshSession.access_token) {
+        try {
+          client.realtime.setAuth(freshSession.access_token);
+        } catch {}
+      }
+      const user = freshSession.user;
       const sessionUser = {
         id: user.id,
         email: user.email,
-        name: user.user_metadata?.name || user.user_metadata?.display_name || user.email.split('@')[0],
+        name:
+          user.user_metadata?.name ||
+          user.user_metadata?.display_name ||
+          user.email.split('@')[0],
         mode: 'supabase'
       };
       if (hasBrowserStorage()) {
@@ -1227,11 +1327,19 @@ export async function restoreSupabaseSession() {
       return sessionUser;
     }
   } catch {
-    // Fall back to saved session if offline
+    // Si hubo falla de red o Supabase no respondió, mantener fallback seguro
   }
 
   const saved = getSavedSession();
   if (saved?.mode === 'local') return saved;
+  // Si la sesión guardada era de Supabase pero online ya no existe/expiró:
+  if (saved?.mode === 'supabase') {
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      await signOutApp();
+      return null;
+    }
+    return saved;
+  }
   return null;
 }
 
@@ -1389,10 +1497,7 @@ export async function subscribeSupabaseRealtime(onDatabaseChanged, onStatusChang
 // Direct Immediate Supabase PostgreSQL Queries & Targeted Row Mutations
 // ============================================================================
 
-export async function fetchSupabaseDatabase() {
-  const client = getSupabaseClient();
-  if (!client) throw new Error('Supabase no está configurado.');
-
+async function executeFetchQueries(client) {
   const [
     categoriesRes,
     suppliersRes,
@@ -1454,8 +1559,80 @@ export async function fetchSupabaseDatabase() {
   ].find((r) => r.error)?.error;
 
   if (firstErr) {
-    throw new Error(`Error al sincronizar con Supabase: ${firstErr.message}`);
+    throw firstErr;
   }
+
+  return {
+    categoriesRes,
+    suppliersRes,
+    productsRes,
+    variantsRes,
+    suppliesRes,
+    combosRes,
+    comboItemsRes,
+    restocksRes,
+    restockItemsRes,
+    customersRes,
+    salesRes,
+    saleItemsRes,
+    saleSuppliesRes,
+    salePaymentsRes,
+    deliveryPointsRes,
+    deliverySlotsRes,
+    yapeGatewayRes,
+    yapeIncomingRes
+  };
+}
+
+export async function fetchSupabaseDatabase() {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no está configurado.');
+
+  // Refresco proactivo preventivo si el token está próximo a caducar
+  await ensureFreshSupabaseSession();
+
+  let queryResults;
+  try {
+    queryResults = await executeFetchQueries(client);
+  } catch (err) {
+    if (isAuthPermissionError(err)) {
+      // Reintento reactivo con refresco forzado si la sesión expiró en background
+      const refreshed = await client.auth.refreshSession().catch(() => null);
+      if (refreshed?.data?.session?.access_token) {
+        try {
+          client.realtime.setAuth(refreshed.data.session.access_token);
+        } catch {}
+        queryResults = await executeFetchQueries(client);
+      } else {
+        await signOutApp();
+        notifySessionExpired();
+        throw new Error('AUTH_SESSION_EXPIRED: Tu sesión ha expirado por seguridad. Por favor ingresa nuevamente.');
+      }
+    } else {
+      throw new Error(`Error al sincronizar con Supabase: ${err.message}`);
+    }
+  }
+
+  const {
+    categoriesRes,
+    suppliersRes,
+    productsRes,
+    variantsRes,
+    suppliesRes,
+    combosRes,
+    comboItemsRes,
+    restocksRes,
+    restockItemsRes,
+    customersRes,
+    salesRes,
+    saleItemsRes,
+    saleSuppliesRes,
+    salePaymentsRes,
+    deliveryPointsRes,
+    deliverySlotsRes,
+    yapeGatewayRes,
+    yapeIncomingRes
+  } = queryResults;
 
   const comboItemsByCombo = new Map();
   for (const ci of comboItemsRes.data || []) {

@@ -9,6 +9,9 @@ import {
   isSessionExpired,
   getSavedSession,
   signOutApp,
+  isAuthPermissionError,
+  onSessionExpired,
+  notifySessionExpired,
   SESSION_TIMEOUT_KEY,
   LAST_ACTIVITY_KEY
 } from '../src/adapters/storageRepository.js';
@@ -89,5 +92,37 @@ test('Session Inactivity Timeout: configuración, rastreo de actividad y expirac
     assert.equal(localStorage.getItem('glow_with_pipo_session_v1'), null);
     assert.equal(localStorage.getItem(LAST_ACTIVITY_KEY), null);
     assert.equal(getLastUserActivity(), 0);
+  });
+
+  await t.test('isAuthPermissionError identifica errores de permisos PostgreSQL y JWT expirado', () => {
+    assert.equal(isAuthPermissionError({ code: '42501' }), true);
+    assert.equal(isAuthPermissionError({ message: 'permission denied for table suppliers' }), true);
+    assert.equal(isAuthPermissionError({ message: 'Error: JWT expired' }), true);
+    assert.equal(isAuthPermissionError({ message: 'invalid JWT token' }), true);
+    assert.equal(isAuthPermissionError({ status: 401 }), true);
+    assert.equal(isAuthPermissionError({ status: 403 }), true);
+    assert.equal(isAuthPermissionError({ message: 'AUTH_SESSION_EXPIRED' }), true);
+
+    // Errores no relacionados no deben ser clasificados como auth error
+    assert.equal(isAuthPermissionError({ message: 'Network request failed' }), false);
+    assert.equal(isAuthPermissionError({ code: '23505' }), false);
+    assert.equal(isAuthPermissionError(null), false);
+  });
+
+  await t.test('onSessionExpired y notifySessionExpired despachan eventos reactivos de expiración', () => {
+    let firedCount = 0;
+    const unsub = onSessionExpired(() => {
+      firedCount++;
+    });
+
+    notifySessionExpired();
+    assert.equal(firedCount, 1);
+
+    notifySessionExpired();
+    assert.equal(firedCount, 2);
+
+    unsub();
+    notifySessionExpired();
+    assert.equal(firedCount, 2, 'Tras desuscribirse no debe recibir nuevos disparos');
   });
 });

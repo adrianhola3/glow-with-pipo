@@ -63,12 +63,15 @@ import {
   cloudUpdateSaleStatus,
   cloudUpdateStorefrontMerchandising,
   cloudUpdateYapeGateway,
+  ensureFreshSupabaseSession,
   fetchSupabaseDatabase,
   getSavedSession,
   getSupabaseConfig,
   importLocalDbJson,
+  isAuthPermissionError,
   isSessionExpired,
   loadLocalDb,
+  onSessionExpired,
   recordUserActivity,
   restoreSupabaseSession,
   saveLocalDb,
@@ -208,13 +211,29 @@ export default function App() {
         if (sess) {
           setSession(sess);
           recordUserActivity();
-        } else if (isSessionExpired()) {
-          setSessionExpiredNotice(true);
+        } else {
+          setSession(null);
           setUnauthView('login');
+          if (isSessionExpired()) {
+            setSessionExpiredNotice(true);
+          }
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setSession(null);
+        setUnauthView('login');
+      });
   }, []);
+
+  // Listen for automatic auth expiration / token revocation
+  useEffect(() => {
+    return onSessionExpired(() => {
+      setSession(null);
+      setUnauthView('login');
+      setSessionExpiredNotice(true);
+      notify('Tu sesión ha expirado por seguridad. Por favor ingresa nuevamente.', true);
+    });
+  }, [notify]);
 
   // Inactivity tracking and automatic session expiration
   useEffect(() => {
@@ -292,6 +311,16 @@ export default function App() {
           setLastSyncedAt(new Date());
         }
       } catch (err) {
+        if (err.message?.includes('AUTH_SESSION_EXPIRED') || isAuthPermissionError(err)) {
+          await signOutApp();
+          if (isMounted) {
+            setSession(null);
+            setUnauthView('login');
+            setSessionExpiredNotice(true);
+            notify('Tu sesión ha expirado por seguridad. Por favor ingresa nuevamente.', true);
+          }
+          return;
+        }
         if (!silent && isMounted) {
           notify(err.message || 'No se pudo conectar con Supabase.', true);
         }
@@ -312,8 +341,20 @@ export default function App() {
       unsubFn = unsub;
     });
 
-    function onVisibilityOrOnline() {
+    async function onVisibilityOrOnline() {
       if (document.visibilityState === 'visible' && navigator.onLine) {
+        if (session?.mode === 'supabase') {
+          const fresh = await ensureFreshSupabaseSession();
+          if (!fresh && isSessionExpired()) {
+            await signOutApp();
+            if (isMounted) {
+              setSession(null);
+              setUnauthView('login');
+              setSessionExpiredNotice(true);
+            }
+            return;
+          }
+        }
         pullLatest(true);
         checkForAppUpdate(true);
       }
@@ -443,6 +484,14 @@ export default function App() {
         setLastSyncedAt(new Date());
         if (successMsg) notify(successMsg);
       } catch (cloudErr) {
+        if (cloudErr.message?.includes('AUTH_SESSION_EXPIRED') || isAuthPermissionError(cloudErr)) {
+          await signOutApp();
+          setSession(null);
+          setUnauthView('login');
+          setSessionExpiredNotice(true);
+          notify('Tu sesión ha expirado por seguridad. Por favor ingresa nuevamente.', true);
+          return;
+        }
         // Rollback on server error by pulling fresh server state
         try {
           const fresh = await fetchSupabaseDatabase();
