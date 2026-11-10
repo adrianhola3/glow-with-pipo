@@ -966,14 +966,12 @@ export default function StorefrontAdminView({
                   gap: 8
                 }}
               >
-                <div>
-                  <strong>1. Activa el receptor SQL en Supabase (una única vez):</strong> Ejecuta el
-                  archivo <code>supabase/schema.sql</code> actualizado en el SQL Editor de Supabase
-                  (habilita <code>ingest_yape_android_webhook</code> y fotos de tonos).
+                <div style={{ color: '#065f46', fontWeight: 700 }}>
+                  ✅ Receptor inteligente activo en Supabase (<code>ingest_yape_android_webhook</code>).
                 </div>
                 <div>
-                  <strong>2. En MacroDroid (Android de Fabiana):</strong>
-                  <ul style={{ margin: '4px 0 0 16px', padding: 0, lineHeight: 1.5 }}>
+                  <strong>Pasos en MacroDroid (Android de Fabiana):</strong>
+                  <ul style={{ margin: '4px 0 0 16px', padding: 0, lineHeight: 1.55 }}>
                     <li>
                       <strong>Disparador:</strong> Notificación recibida → App: <strong>Yape</strong> →
                       Texto contiene: <code>te envi</code>
@@ -981,6 +979,9 @@ export default function StorefrontAdminView({
                     <li>
                       <strong>Acción:</strong> Solicitud HTTP → Método: <strong>POST</strong> → Tipo de
                       contenido: <code>application/json</code>
+                    </li>
+                    <li>
+                      <strong>Cabeceras HTTP (2):</strong> <code>apikey</code> y <code>Authorization</code>
                     </li>
                   </ul>
                 </div>
@@ -992,15 +993,23 @@ export default function StorefrontAdminView({
                     onClick={() => copyMacroText('url', macroWebhookUrl)}
                   >
                     <Copy size={13} />{' '}
-                    {copiedMacroKey === 'url' ? '¡URL Copiada!' : 'Copiar URL Webhook'}
+                    {copiedMacroKey === 'url' ? '¡URL Copiada!' : '1. Copiar URL'}
                   </button>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => copyMacroText('key', macroApiKey)}
+                    onClick={() => copyMacroText('apikey', macroApiKey)}
                   >
                     <Copy size={13} />{' '}
-                    {copiedMacroKey === 'key' ? '¡Header apikey Copiado!' : 'Copiar apikey / Bearer'}
+                    {copiedMacroKey === 'apikey' ? '¡apikey Copiado!' : '2. Copiar apikey'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => copyMacroText('bearer', `Bearer ${macroApiKey}`)}
+                  >
+                    <Copy size={13} />{' '}
+                    {copiedMacroKey === 'bearer' ? '¡Bearer Copiado!' : '3. Copiar Authorization'}
                   </button>
                   <button
                     type="button"
@@ -1013,7 +1022,7 @@ export default function StorefrontAdminView({
                     }
                   >
                     <Copy size={13} />{' '}
-                    {copiedMacroKey === 'body' ? '¡JSON Copiado!' : 'Copiar Cuerpo JSON'}
+                    {copiedMacroKey === 'body' ? '¡JSON Copiado!' : '4. Copiar JSON'}
                   </button>
                 </div>
               </div>
