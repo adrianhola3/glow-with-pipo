@@ -1719,8 +1719,8 @@ export default function StorefrontView({
                   />
                   <span>
                     {checkingGateway
-                      ? 'Despertando detector automático de Yape...'
-                      : 'Validador Yape de Fabiana activo · Verificación automática de monto + titular'}
+                      ? 'Preparando pasarela de pago Yape...'
+                      : 'Pago Yape directo a Fabiana · Validación por monto + titular'}
                   </span>
                 </div>
                 <span className="badge badge-ok" style={{ fontSize: '0.68rem' }}>

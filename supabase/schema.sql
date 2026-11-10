@@ -999,9 +999,78 @@ begin
 end;
 $$;
 
+-- 10.7 Raw Android / MacroDroid Notification Parser Webhook
+create or replace function public.ingest_yape_android_webhook(
+  raw_title text default '',
+  raw_text text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  combined text := trim(coalesce(raw_title, '') || ' ' || coalesce(raw_text, ''));
+  clean_for_name text;
+  amt_match text[];
+  name_match text[];
+  op_match text[];
+  parsed_amount numeric(12,2);
+  parsed_name text;
+  parsed_op text := '';
+begin
+  -- Ignorar transferencias salientes ("Yapeaste!", "Enviaste") o promociones sin monto
+  if combined = '' or combined ~* '(yapeaste|enviaste)' then
+    return jsonb_build_object('ignored', true, 'reason', 'outgoing_or_empty');
+  end if;
+
+  amt_match := regexp_match(combined, 'S/\.?\s*([0-9]+(?:[.,][0-9]{1,2})?)', 'i');
+  if amt_match is null then
+    return jsonb_build_object('ignored', true, 'reason', 'no_amount_found');
+  end if;
+  parsed_amount := replace(amt_match[1], ',', '.')::numeric;
+
+  clean_for_name := regexp_replace(
+    coalesce(raw_text, ''),
+    '^\s*(?:¡?\s*Yape!?\s*|Confirmaci[oó]n\s+de\s+Pago\s*:?\s*)+',
+    '',
+    'i'
+  );
+  name_match := regexp_match(clean_for_name, '^\s*(.+?)\s+te\s+(?:envi[oó]|yape[oó])', 'i');
+
+  if name_match is null then
+    clean_for_name := regexp_replace(
+      combined,
+      '^\s*(?:¡?\s*Yape!?\s*|Confirmaci[oó]n\s+de\s+Pago\s*:?\s*)+',
+      '',
+      'i'
+    );
+    name_match := regexp_match(clean_for_name, '^\s*(.+?)\s+te\s+(?:envi[oó]|yape[oó])', 'i');
+  end if;
+
+  if name_match is null or trim(name_match[1]) = '' then
+    return jsonb_build_object('ignored', true, 'reason', 'no_sender_found');
+  end if;
+  parsed_name := trim(name_match[1]);
+
+  op_match := regexp_match(combined, '(?:c[oó]d\.?\s*(?:de\s*seguridad)?\s*(?:es)?\s*[:#]?\s*|operaci[oó]n\s*[:#]?\s*)([0-9]{3,8})', 'i');
+  if op_match is not null then
+    parsed_op := trim(op_match[1]);
+  end if;
+
+  return public.register_incoming_yape_notification(
+    parsed_name,
+    parsed_amount,
+    parsed_op,
+    combined
+  );
+end;
+$$;
+
 grant execute on function public.normalize_person_name(text) to anon, authenticated;
 grant execute on function public.get_public_storefront_catalog() to anon, authenticated;
 grant execute on function public.wake_and_check_yape_gateway() to anon, authenticated;
 grant execute on function public.create_web_storefront_order(jsonb) to anon, authenticated;
 grant execute on function public.check_web_order_yape_status(uuid) to anon, authenticated;
 grant execute on function public.register_incoming_yape_notification(text, numeric, text, text) to anon, authenticated;
+grant execute on function public.ingest_yape_android_webhook(text, text) to anon, authenticated;

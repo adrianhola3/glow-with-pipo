@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
   ExternalLink,
   Eye,
   EyeOff,
@@ -19,9 +20,11 @@ import {
   Trash2,
   Upload,
   Wifi,
+  X,
   Zap
 } from 'lucide-react';
 import { formatMoney } from '../../domain/calculations.js';
+import { getSupabaseConfig } from '../../adapters/storageRepository.js';
 
 export default function StorefrontAdminView({
   db,
@@ -86,6 +89,19 @@ export default function StorefrontAdminView({
   const [simAmount, setSimAmount] = useState('');
   const [simOpCode, setSimOpCode] = useState('');
   const [simulating, setSimulating] = useState(false);
+  const [copiedMacroKey, setCopiedMacroKey] = useState('');
+
+  const supabaseCfg = useMemo(() => getSupabaseConfig(), []);
+  const macroWebhookUrl = `${supabaseCfg?.url || 'https://fpahqojoqjrrthlwland.supabase.co'}/rest/v1/rpc/ingest_yape_android_webhook`;
+  const macroApiKey = supabaseCfg?.anonKey || '';
+
+  function copyMacroText(key, text) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedMacroKey(key);
+      setTimeout(() => setCopiedMacroKey(''), 2000);
+    }
+  }
 
   const deliveryPoints = db.deliveryPoints || [];
   const deliverySlots = db.deliverySlots || [];
@@ -916,6 +932,91 @@ export default function StorefrontAdminView({
                     : 'Disparar Notificación Yape y Validar Pedido'}
                 </button>
               </form>
+            </div>
+
+            {/* Guide to Link Fabiana's Android via MacroDroid */}
+            <div
+              style={{
+                borderTop: '1px solid var(--pipo-border)',
+                paddingTop: 14,
+                marginTop: 16
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <Smartphone size={16} color="var(--pipo-burgundy)" />
+                <h3 style={{ margin: 0, fontSize: '0.96rem', color: 'var(--pipo-burgundy)' }}>
+                  📱 Conectar Android de Fabiana (MacroDroid)
+                </h3>
+              </div>
+              <p style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--pipo-muted)', lineHeight: 1.4 }}>
+                Para que los Yapes reales que llegan al celular Android de Fabiana validen pedidos web
+                automáticamente sin intervención manual:
+              </p>
+
+              <div
+                style={{
+                  background: '#faf5ff',
+                  border: '1px solid #e9d5ff',
+                  borderRadius: 12,
+                  padding: 12,
+                  fontSize: '0.78rem',
+                  color: '#3b0f47',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8
+                }}
+              >
+                <div>
+                  <strong>1. Activa el receptor SQL en Supabase (una única vez):</strong> Ejecuta el
+                  archivo <code>supabase/schema.sql</code> actualizado en el SQL Editor de Supabase
+                  (habilita <code>ingest_yape_android_webhook</code> y fotos de tonos).
+                </div>
+                <div>
+                  <strong>2. En MacroDroid (Android de Fabiana):</strong>
+                  <ul style={{ margin: '4px 0 0 16px', padding: 0, lineHeight: 1.5 }}>
+                    <li>
+                      <strong>Disparador:</strong> Notificación recibida → App: <strong>Yape</strong> →
+                      Texto contiene: <code>te envi</code>
+                    </li>
+                    <li>
+                      <strong>Acción:</strong> Solicitud HTTP → Método: <strong>POST</strong> → Tipo de
+                      contenido: <code>application/json</code>
+                    </li>
+                  </ul>
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => copyMacroText('url', macroWebhookUrl)}
+                  >
+                    <Copy size={13} />{' '}
+                    {copiedMacroKey === 'url' ? '¡URL Copiada!' : 'Copiar URL Webhook'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => copyMacroText('key', macroApiKey)}
+                  >
+                    <Copy size={13} />{' '}
+                    {copiedMacroKey === 'key' ? '¡Header apikey Copiado!' : 'Copiar apikey / Bearer'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() =>
+                      copyMacroText(
+                        'body',
+                        '{"raw_title":"[not_title]","raw_text":"[notification]"}'
+                      )
+                    }
+                  >
+                    <Copy size={13} />{' '}
+                    {copiedMacroKey === 'body' ? '¡JSON Copiado!' : 'Copiar Cuerpo JSON'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
