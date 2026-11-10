@@ -106,7 +106,9 @@ export default function StorefrontAdminView({
     () =>
       webOrders.filter(
         (s) =>
-          s.paymentVerificationStatus === 'pending_yape_verification' && s.status !== 'cancelled'
+          (s.paymentVerificationStatus === 'pending_yape_verification' ||
+            s.paymentVerificationStatus === 'pending_verification') &&
+          s.status !== 'cancelled'
       ),
     [webOrders]
   );
@@ -944,7 +946,10 @@ export default function StorefrontAdminView({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {webOrders.slice(0, 12).map((sale) => {
                   const cust = (db.customers || []).find((c) => c.id === sale.customerId);
-                  const isVerified = sale.paymentVerificationStatus === 'verified_auto';
+                  const isVerified =
+                    sale.paymentVerificationStatus === 'verified_auto' ||
+                    sale.paymentVerificationStatus === 'verified_manual' ||
+                    sale.balanceDue <= 0;
                   return (
                     <div
                       key={sale.id}

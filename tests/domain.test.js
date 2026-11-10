@@ -34,6 +34,8 @@ import {
   applyUpdateSalePrice,
   applyUpdateSaleStatus,
   listAutoSnapshots,
+  normalizeWebOrderPayload,
+  normalizeWebOrderResult,
   restoreAutoSnapshot,
   saveLocalDb
 } from '../src/adapters/storageRepository.js';
@@ -667,6 +669,40 @@ test('Storefront visual merchandising updates photos, descriptions, visibility a
   assert.equal(updated.isFeatured, true);
   assert.equal(db.variants[0].imageUrl, 'https://example.com/shade-01.jpg');
 });
+
+test('Web storefront order payload & result normalization handles buyerName/customerName and verification statuses', () => {
+  const normalized = normalizeWebOrderPayload({
+    customerName: '  Adrian Huaman Castillo ',
+    customerWhatsapp: ' 975551206 ',
+    yapeHolderName: ' Adrian Huaman Castillo ',
+    notes: ' Nos vemos en la puerta '
+  });
+
+  assert.equal(normalized.buyerName, 'Adrian Huaman Castillo');
+  assert.equal(normalized.customerName, 'Adrian Huaman Castillo');
+  assert.equal(normalized.buyerWhatsapp, '975551206');
+  assert.equal(normalized.customerWhatsapp, '975551206');
+  assert.equal(normalized.yapeHolderName, 'Adrian Huaman Castillo');
+
+  const pendingRes = normalizeWebOrderResult({
+    saleId: '123',
+    saleCode: 'VTA-005',
+    verificationStatus: 'pending_verification',
+    totalCharged: 25
+  });
+  assert.equal(pendingRes.code, 'VTA-005');
+  assert.equal(pendingRes.verified, false);
+
+  const paidRes = normalizeWebOrderResult({
+    saleId: '123',
+    saleCode: 'VTA-005',
+    verificationStatus: 'verified_auto',
+    isPaid: true
+  });
+  assert.equal(paidRes.code, 'VTA-005');
+  assert.equal(paidRes.verified, true);
+});
+
 
 
 

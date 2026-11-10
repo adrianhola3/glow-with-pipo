@@ -596,8 +596,8 @@ security definer
 set search_path = public
 as $$
 declare
-  buyer_name text := trim(coalesce(payload ->> 'buyerName', ''));
-  buyer_whatsapp text := trim(coalesce(payload ->> 'buyerWhatsapp', ''));
+  buyer_name text := trim(coalesce(payload ->> 'buyerName', payload ->> 'customerName', ''));
+  buyer_whatsapp text := trim(coalesce(payload ->> 'buyerWhatsapp', payload ->> 'customerWhatsapp', ''));
   yape_holder text := trim(coalesce(payload ->> 'yapeHolderName', ''));
   point_id uuid := nullif(trim(coalesce(payload ->> 'deliveryPointId', '')), '')::uuid;
   slot_id uuid := nullif(trim(coalesce(payload ->> 'deliverySlotId', '')), '')::uuid;

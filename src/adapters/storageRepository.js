@@ -3429,25 +3429,58 @@ export async function wakeAndCheckYapeGateway() {
   return data;
 }
 
+export function normalizeWebOrderPayload(payload = {}) {
+  const buyerName = String(payload.buyerName || payload.customerName || '').trim();
+  const buyerWhatsapp = String(payload.buyerWhatsapp || payload.customerWhatsapp || '').trim();
+  return {
+    ...payload,
+    buyerName,
+    customerName: buyerName,
+    buyerWhatsapp,
+    customerWhatsapp: buyerWhatsapp,
+    yapeHolderName: String(payload.yapeHolderName || '').trim(),
+    notes: String(payload.notes || '').trim()
+  };
+}
+
+export function normalizeWebOrderResult(data) {
+  if (!data || typeof data !== 'object') return data;
+  const isVerified = Boolean(
+    data.verified ||
+      data.isPaid ||
+      data.verificationStatus === 'verified_auto' ||
+      data.verificationStatus === 'verified_manual'
+  );
+  const code = data.code || data.saleCode || data.sale_code || '';
+  return {
+    ...data,
+    code,
+    saleCode: code,
+    verified: isVerified,
+    isPaid: isVerified
+  };
+}
+
 export async function submitWebStorefrontOrder(payload) {
   const client = getSupabaseClient();
   if (!client) throw new Error('No hay conexión con el servidor de pedidos.');
+  const normalizedPayload = normalizeWebOrderPayload(payload);
   const { data, error } = await client.rpc('create_web_storefront_order', {
-    payload
+    payload: normalizedPayload
   });
   if (error) {
     throw new Error(error.message || 'No se pudo registrar el pedido.');
   }
-  return data;
+  return normalizeWebOrderResult(data);
 }
 
 export async function checkWebOrderYapeStatus(saleId) {
   const client = getSupabaseClient();
-  if (!client || !saleId) return { verified: false, status: 'pending_yape_verification' };
+  if (!client || !saleId) return { verified: false, isPaid: false, status: 'pending_verification' };
   const { data, error } = await client.rpc('check_web_order_yape_status', {
     target_sale_id: saleId
   });
-  if (error) return { verified: false, status: 'pending_yape_verification' };
-  return data;
+  if (error || !data) return { verified: false, isPaid: false, status: 'pending_verification' };
+  return normalizeWebOrderResult(data);
 }
 

@@ -586,7 +586,8 @@ export default function App() {
   const pendingWebCount = (db.sales || []).filter(
     (s) =>
       s.orderSource === 'web' &&
-      s.paymentVerificationStatus === 'pending_yape_verification' &&
+      (s.paymentVerificationStatus === 'pending_yape_verification' ||
+        s.paymentVerificationStatus === 'pending_verification') &&
       s.status !== 'cancelled'
   ).length;
 
