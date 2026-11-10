@@ -301,6 +301,7 @@ export default function StorefrontView({
   // Active Created Order & Yape Polling State
   const [activeOrder, setActiveOrder] = useState(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
+  const [manualCheckHint, setManualCheckHint] = useState('');
   const [copiedPhone, setCopiedPhone] = useState(false);
 
   // Lock body scroll when modal, detail view or cart drawer is open
@@ -813,6 +814,7 @@ export default function StorefrontView({
     if (cart.length === 0) return;
     setIsCartOpen(false);
     setCheckoutError('');
+    setManualCheckHint('');
     setCheckoutStep('form');
     setCheckoutOpen(true);
   }
@@ -877,6 +879,7 @@ export default function StorefrontView({
   async function handleManualCheckYapeNow() {
     if (!activeOrder?.saleId) return;
     setCheckingPayment(true);
+    setManualCheckHint('');
     try {
       const res = await checkWebOrderYapeStatus(activeOrder.saleId);
       if (res?.verified) {
@@ -884,6 +887,10 @@ export default function StorefrontView({
         setCheckoutStep('verified');
         setCart([]);
         loadStorefront();
+      } else {
+        setManualCheckHint(
+          'Aún no llega la confirmación automática al sistema. Si ya realizaste el Yape, presiona "Avisar por WhatsApp" para enviar tu constancia y confirmar tu pedido al instante.'
+        );
       }
     } finally {
       setCheckingPayment(false);
@@ -1905,11 +1912,11 @@ export default function StorefrontView({
                     <div className="pipo-yape-amount-display">
                       {formatMoney(activeOrder.totalCharged)}
                     </div>
-                    <p style={{ margin: '4px 0 12px', fontSize: '0.85rem', color: 'var(--pipo-cocoa)' }}>
+                    <p className="pipo-yape-holder-hint">
                       Yapea el monto exacto desde la cuenta de{' '}
-                      <strong style={{ color: 'var(--pipo-burgundy)' }}>
+                      <span className="pipo-yape-holder-pill">
                         {activeOrder.yapeHolderName}
-                      </strong>
+                      </span>
                     </p>
 
                     <div className="pipo-yape-number-card">
@@ -1920,13 +1927,13 @@ export default function StorefrontView({
                           style={{ height: 38, width: 'auto' }}
                         />
                         <div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--pipo-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                          <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>
                             NÚMERO OFICIAL DE YAPE (FABIANA)
                           </div>
-                          <div style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--pipo-burgundy)', letterSpacing: '0.04em' }}>
+                          <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#4b1557', letterSpacing: '0.04em' }}>
                             {receiverPhone}
                           </div>
-                          <div style={{ fontSize: '0.74rem', color: 'var(--pipo-cocoa)', fontWeight: 600 }}>
+                          <div style={{ fontSize: '0.76rem', color: '#475569', fontWeight: 600 }}>
                             Titular receptora: Fabiana
                           </div>
                         </div>
@@ -1941,15 +1948,23 @@ export default function StorefrontView({
                     </div>
 
                     <div className="pipo-yape-live-radar">
-                      <RefreshCw size={18} className="pipo-spin" color="var(--pipo-burgundy)" />
+                      <RefreshCw size={18} className="pipo-spin" color="#742284" style={{ flexShrink: 0 }} />
                       <div>
-                        <strong>Esperando tu Yape en tiempo real...</strong>
-                        <div style={{ fontSize: '0.76rem', color: 'var(--pipo-muted)' }}>
-                          Pedido <strong>{activeOrder.code}</strong> reservado · El detector validará tu abono a nombre de Fabiana.
+                        <strong style={{ color: '#3b0f47', display: 'block', marginBottom: 2 }}>
+                          Esperando tu Yape en tiempo real...
+                        </strong>
+                        <div style={{ fontSize: '0.78rem', color: '#4c1d95', lineHeight: 1.35 }}>
+                          Pedido <strong>{activeOrder.code || activeOrder.saleCode}</strong> reservado · Validación directa a nombre de Fabiana.
                         </div>
                       </div>
                     </div>
                   </div>
+
+                  {manualCheckHint && (
+                    <div className="pipo-yape-manual-hint">
+                      {manualCheckHint}
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
                     <button

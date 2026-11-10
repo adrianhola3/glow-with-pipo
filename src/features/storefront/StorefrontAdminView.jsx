@@ -978,7 +978,27 @@ export default function StorefrontAdminView({
                         </div>
                       </div>
                       {!isVerified && (
-                        <div style={{ marginTop: 8 }}>
+                        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={async () => {
+                              setSimulating(true);
+                              try {
+                                await onSimulateYapeNotification({
+                                  senderName: sale.yapeHolderName || cust?.name || '',
+                                  amount: Number(sale.totalCharged),
+                                  operationCode: 'APROBADO-ERP'
+                                });
+                              } finally {
+                                setSimulating(false);
+                              }
+                            }}
+                            disabled={simulating}
+                          >
+                            <CheckCircle2 size={14} /> Confirmar Yape Recibido (1 clic)
+                          </button>
+
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
@@ -987,7 +1007,7 @@ export default function StorefrontAdminView({
                               setSimAmount(String(sale.totalCharged));
                             }}
                           >
-                            Autocompletar en Simulador Yape ↑
+                            Autocompletar en Simulador ↑
                           </button>
                         </div>
                       )}
