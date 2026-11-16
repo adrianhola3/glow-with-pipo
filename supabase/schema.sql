@@ -963,9 +963,15 @@ as $$
 declare
   new_id uuid := gen_random_uuid();
   norm_name text := public.normalize_person_name(sender_name);
+  clean_op text := trim(coalesce(op_code, ''));
+  existing_payment public.yape_incoming_payments%rowtype;
   pending_sale public.sales%rowtype;
 begin
-  if not (coalesce(public.is_pipo_owner(), false) or coalesce(auth.role() = 'service_role', false)) then
+  if not (
+    coalesce(public.is_pipo_owner(), false)
+    or coalesce(auth.role() = 'service_role', false)
+    or coalesce(current_setting('pipo.internal_webhook_call', true), '') = 'true'
+  ) then
     raise exception 'No autorizado';
   end if;
 
@@ -975,10 +981,31 @@ begin
       updated_at = now()
   where id = 'primary';
 
+  -- Deduplicate repeated Android notifications sharing the same non-empty operation_code
+  if clean_op <> '' then
+    select * into existing_payment
+    from public.yape_incoming_payments y
+    where y.operation_code = clean_op
+      and y.amount = round(payment_amount, 2)
+      and y.normalized_sender_name = norm_name
+      and (y.consumed = false or y.received_at >= now() - interval '20 minutes')
+    order by y.received_at desc
+    limit 1;
+
+    if existing_payment.id is not null then
+      return jsonb_build_object(
+        'paymentId', existing_payment.id,
+        'matchedSaleId', existing_payment.matched_sale_id,
+        'autoVerified', coalesce(existing_payment.consumed, false),
+        'duplicate', true
+      );
+    end if;
+  end if;
+
   insert into public.yape_incoming_payments (
     id, sender_full_name, normalized_sender_name, amount, operation_code, raw_notification_text
   ) values (
-    new_id, trim(coalesce(sender_name, '')), norm_name, round(payment_amount, 2), trim(coalesce(op_code, '')), trim(coalesce(raw_text, ''))
+    new_id, trim(coalesce(sender_name, '')), norm_name, round(payment_amount, 2), clean_op, trim(coalesce(raw_text, ''))
   );
 
   -- Auto-match if a web order is already waiting for this exact amount + holder name
@@ -1048,10 +1075,6 @@ declare
   parsed_name text;
   parsed_op text := '';
 begin
-  if not (coalesce(public.is_pipo_owner(), false) or coalesce(auth.role() = 'service_role', false)) then
-    raise exception 'No autorizado';
-  end if;
-
   -- Ignorar transferencias salientes ("Yapeaste!", "Enviaste") o promociones sin monto
   if combined = '' or combined ~* '(yapeaste|enviaste)' then
     return jsonb_build_object('ignored', true, 'reason', 'outgoing_or_empty');
@@ -1091,6 +1114,7 @@ begin
     parsed_op := trim(op_match[1]);
   end if;
 
+  perform set_config('pipo.internal_webhook_call', 'true', true);
   return public.register_incoming_yape_notification(
     parsed_name,
     parsed_amount,
@@ -1151,11 +1175,10 @@ grant execute on function public.get_public_storefront_catalog() to anon, authen
 grant execute on function public.wake_and_check_yape_gateway() to anon, authenticated;
 grant execute on function public.create_web_storefront_order(jsonb) to anon, authenticated;
 grant execute on function public.check_web_order_yape_status(uuid) to anon, authenticated;
--- Revoke PUBLIC as well: PostgreSQL grants function EXECUTE to PUBLIC by default.
+-- Revoke PUBLIC/anon from direct register_incoming_yape_notification calls, while keeping ingest_yape_android_webhook open to MacroDroid.
 revoke execute on function public.register_incoming_yape_notification(text, numeric, text, text) from public, anon;
-revoke execute on function public.ingest_yape_android_webhook(text, text) from public, anon;
 grant execute on function public.register_incoming_yape_notification(text, numeric, text, text) to authenticated, service_role;
-grant execute on function public.ingest_yape_android_webhook(text, text) to authenticated, service_role;
+grant execute on function public.ingest_yape_android_webhook(text, text) to anon, authenticated, service_role;
 revoke execute on function public.confirm_web_order_payment_manual(uuid) from public, anon;
 grant execute on function public.confirm_web_order_payment_manual(uuid) to authenticated, service_role;
 
