@@ -1158,3 +1158,33 @@ grant execute on function public.register_incoming_yape_notification(text, numer
 grant execute on function public.ingest_yape_android_webhook(text, text) to authenticated, service_role;
 revoke execute on function public.confirm_web_order_payment_manual(uuid) from public, anon;
 grant execute on function public.confirm_web_order_payment_manual(uuid) to authenticated, service_role;
+
+-- ============================================================================
+-- 10. Storefront Public Media Bucket ('storefront-media') & Storage RLS
+-- ============================================================================
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.tables
+    where table_schema = 'storage' and table_name = 'buckets'
+  ) then
+    insert into storage.buckets (id, name, public)
+    values ('storefront-media', 'storefront-media', true)
+    on conflict (id) do update set public = true;
+
+    drop policy if exists "Public read access for storefront-media" on storage.objects;
+    create policy "Public read access for storefront-media"
+      on storage.objects for select
+      to anon, authenticated
+      using (bucket_id = 'storefront-media');
+
+    drop policy if exists "Owner manage storefront-media objects" on storage.objects;
+    create policy "Owner manage storefront-media objects"
+      on storage.objects for all
+      to authenticated
+      using (bucket_id = 'storefront-media' and public.is_pipo_owner())
+      with check (bucket_id = 'storefront-media' and public.is_pipo_owner());
+  end if;
+end
+$$;

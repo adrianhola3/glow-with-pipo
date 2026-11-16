@@ -38,13 +38,17 @@ import {
   cloudDeleteCustomer,
   cloudDeleteSale,
   cloudUpdateSaleStatus,
+  compressImageToWebP,
+  computeCompressedDimensions,
   confirmWebOrderManual,
   listAutoSnapshots,
   normalizeWebOrderPayload,
   normalizeWebOrderResult,
   restoreAutoSnapshot,
   saveLocalDb,
-  setSupabaseClientForTests
+  setSupabaseClientForTests,
+  STOREFRONT_MEDIA_BUCKET,
+  uploadStorefrontMedia
 } from '../src/adapters/storageRepository.js';
 
 function emptyState() {
@@ -990,6 +994,75 @@ test('cloudUpdateSaleStatus, cloudDeleteSale, cloudDeleteCustomer and confirmWeb
   } finally {
     setSupabaseClientForTests(null);
   }
+});
+
+test('mediaStorage: computeCompressedDimensions, compressImageToWebP, and uploadStorefrontMedia upload to Supabase bucket with WebP fallback', async () => {
+  assert.equal(STOREFRONT_MEDIA_BUCKET, 'storefront-media');
+
+  // 1. Proportional downscaling for oversized mobile photos
+  assert.deepEqual(computeCompressedDimensions(4000, 3000, 1200), { width: 1200, height: 900 });
+  assert.deepEqual(computeCompressedDimensions(2000, 4000, 1200), { width: 600, height: 1200 });
+  assert.deepEqual(computeCompressedDimensions(800, 600, 1200), { width: 800, height: 600 });
+
+  // 2. Headless/Node compression fallback preserves or encodes DataURL cleanly
+  const sampleDataUrl = 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=';
+  const compressed = await compressImageToWebP(sampleDataUrl, { maxDimension: 1200, quality: 0.82 });
+  assert.equal(compressed.mimeType, 'image/webp');
+  assert.ok(compressed.dataUrl.startsWith('data:image/'));
+  assert.ok(compressed.blob instanceof Blob || Buffer.isBuffer(compressed.bytes));
+
+  // 3. Successful upload to Supabase Storage bucket 'storefront-media'
+  const uploadedPaths = [];
+  const mockStorageClient = {
+    storage: {
+      from(bucketName) {
+        assert.equal(bucketName, 'storefront-media');
+        return {
+          async upload(objectPath, _body, opts) {
+            uploadedPaths.push({ objectPath, opts });
+            return { data: { path: objectPath }, error: null };
+          },
+          getPublicUrl(objectPath) {
+            return {
+              data: {
+                publicUrl: `https://fpahqojoqjrrthlwland.supabase.co/storage/v1/object/public/storefront-media/${objectPath}`
+              }
+            };
+          }
+        };
+      }
+    }
+  };
+
+  const cloudResult = await uploadStorefrontMedia(sampleDataUrl, {
+    folder: 'products',
+    client: mockStorageClient
+  });
+  assert.equal(cloudResult.storage, 'supabase');
+  assert.equal(uploadedPaths.length, 1);
+  assert.match(uploadedPaths[0].objectPath, /^products\/.+\.webp$/);
+  assert.equal(uploadedPaths[0].opts.contentType, 'image/webp');
+  assert.match(cloudResult.url, /^https:\/\/.+\/storefront-media\/products\/.+\.webp$/);
+
+  // 4. Graceful fallback to compressed WebP DataURL if bucket does not exist yet or upload fails
+  const failingClient = {
+    storage: {
+      from() {
+        return {
+          async upload() {
+            return { data: null, error: { message: 'Bucket not found' } };
+          }
+        };
+      }
+    }
+  };
+
+  const fallbackResult = await uploadStorefrontMedia(sampleDataUrl, {
+    folder: 'variants',
+    client: failingClient
+  });
+  assert.equal(fallbackResult.storage, 'inline-fallback');
+  assert.equal(fallbackResult.url, sampleDataUrl);
 });
 
 

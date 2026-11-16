@@ -24,7 +24,7 @@ import {
   Zap
 } from 'lucide-react';
 import { formatMoney } from '../../domain/calculations.js';
-import { getSupabaseConfig } from '../../adapters/storageRepository.js';
+import { getSupabaseConfig, uploadStorefrontMedia } from '../../adapters/storageRepository.js';
 
 export default function StorefrontAdminView({
   db,
@@ -189,43 +189,52 @@ export default function StorefrontAdminView({
     setEditIsFeatured(Boolean(item.isFeatured));
   }
 
-  function handleImageFileUpload(e) {
+  async function handleImageFileUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setEditImageUrl(reader.result);
+    try {
+      const uploaded = await uploadStorefrontMedia(file, {
+        folder: editingItem?.entityType === 'combo' ? 'combos' : 'products'
+      });
+      if (uploaded?.url) {
+        setEditImageUrl(uploaded.url);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Ignore invalid image selection
+    }
   }
 
-  function handleShadesImageFileUpload(e) {
+  async function handleShadesImageFileUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setEditShadesImageUrl(reader.result);
+    try {
+      const uploaded = await uploadStorefrontMedia(file, {
+        folder: 'shades'
+      });
+      if (uploaded?.url) {
+        setEditShadesImageUrl(uploaded.url);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Ignore invalid image selection
+    }
   }
 
-  function handleVariantImageFileUpload(varId, e) {
+  async function handleVariantImageFileUpload(varId, e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
+    try {
+      const uploaded = await uploadStorefrontMedia(file, {
+        folder: 'variants'
+      });
+      if (uploaded?.url) {
         setEditVariantImages((prev) => ({
           ...prev,
-          [varId]: reader.result
+          [varId]: uploaded.url
         }));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Ignore invalid image selection
+    }
   }
 
   function handleSaveCuration(e) {

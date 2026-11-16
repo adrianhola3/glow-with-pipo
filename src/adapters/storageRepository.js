@@ -11,6 +11,25 @@ import {
 
 export { normalizePaymentMethod };
 import { DEFAULT_COMBO_RATIO, PRODUCT_CATEGORIES } from '../domain/constants.js';
+import {
+  STOREFRONT_MEDIA_BUCKET,
+  computeCompressedDimensions,
+  compressImageToWebP,
+  uploadStorefrontMedia as uploadStorefrontMediaCore
+} from './mediaStorage.js';
+
+export { STOREFRONT_MEDIA_BUCKET, computeCompressedDimensions, compressImageToWebP };
+
+export async function uploadStorefrontMedia(fileOrSource, optionsOrFolder = {}) {
+  const opts =
+    typeof optionsOrFolder === 'string'
+      ? { folder: optionsOrFolder }
+      : { ...(optionsOrFolder || {}) };
+  if (!opts.client) {
+    opts.client = getSupabaseClient();
+  }
+  return uploadStorefrontMediaCore(fileOrSource, opts);
+}
 
 const LOCAL_DB_KEY = 'glow_with_pipo_db_v1';
 const LOCAL_AUTH_KEY = 'glow_with_pipo_session_v1';
