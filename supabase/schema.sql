@@ -615,6 +615,7 @@ declare
   delivery_tm text := '';
 
   item_rec jsonb;
+  requested_variant record;
   var_row public.product_variants%rowtype;
   prod_row public.products%rowtype;
   qty integer;
@@ -687,8 +688,31 @@ begin
   else
     update public.customers
     set name = buyer_name
-    where id = cust_id;
+    where id = cust_id and trim(coalesce(name, '')) = '';
   end if;
+
+  -- Lock each variant once, in a stable order, and validate the whole cart.
+  -- Per-line checks alone miss repeated variants across products/combos.
+  for requested_variant in
+    select (item ->> 'variantId')::uuid as variant_id,
+           sum(greatest(1, coalesce((item ->> 'quantity')::integer, 1))) as requested_quantity
+    from jsonb_array_elements(items_json) as cart(item)
+    group by (item ->> 'variantId')::uuid
+    order by (item ->> 'variantId')::uuid
+  loop
+    select * into var_row
+    from public.product_variants
+    where id = requested_variant.variant_id
+    for update;
+
+    if var_row.id is null then
+      raise exception 'Uno de los tonos seleccionados ya no existe.';
+    end if;
+    if var_row.stock < requested_variant.requested_quantity then
+      raise exception 'Stock insuficiente para el tono %. Solicitado: %. Disponible: %.',
+        var_row.shade_name, requested_variant.requested_quantity, var_row.stock;
+    end if;
+  end loop;
 
   -- First pass: validate stock and compute totals
   for item_rec in select * from jsonb_array_elements(items_json)
@@ -714,7 +738,8 @@ begin
 
     p_mode := coalesce(item_rec ->> 'pricingMode', 'unit');
     if p_mode = 'combo' then
-      applied_price := round(coalesce((item_rec ->> 'appliedUnitPrice')::numeric, prod_row.combo_price), 2);
+      -- Public checkout uses only the authoritative product combo tariff.
+      applied_price := round(prod_row.combo_price, 2);
     else
       applied_price := round(prod_row.unit_price, 2);
     end if;
@@ -788,7 +813,7 @@ begin
 
     p_mode := coalesce(item_rec ->> 'pricingMode', 'unit');
     if p_mode = 'combo' then
-      applied_price := round(coalesce((item_rec ->> 'appliedUnitPrice')::numeric, prod_row.combo_price), 2);
+      applied_price := round(prod_row.combo_price, 2);
     else
       applied_price := round(prod_row.unit_price, 2);
     end if;
@@ -940,6 +965,10 @@ declare
   norm_name text := public.normalize_person_name(sender_name);
   pending_sale public.sales%rowtype;
 begin
+  if not (coalesce(public.is_pipo_owner(), false) or coalesce(auth.role() = 'service_role', false)) then
+    raise exception 'No autorizado';
+  end if;
+
   update public.yape_gateway_status
   set last_heartbeat_at = now(),
       is_awake = true,
@@ -1019,6 +1048,10 @@ declare
   parsed_name text;
   parsed_op text := '';
 begin
+  if not (coalesce(public.is_pipo_owner(), false) or coalesce(auth.role() = 'service_role', false)) then
+    raise exception 'No autorizado';
+  end if;
+
   -- Ignorar transferencias salientes ("Yapeaste!", "Enviaste") o promociones sin monto
   if combined = '' or combined ~* '(yapeaste|enviaste)' then
     return jsonb_build_object('ignored', true, 'reason', 'outgoing_or_empty');
@@ -1067,10 +1100,61 @@ begin
 end;
 $$;
 
+-- Owner action addresses a specific active web order; the row lock makes
+-- retries atomic and records only the outstanding balance, never the full total twice.
+create or replace function public.confirm_web_order_payment_manual(target_sale_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  s_row public.sales%rowtype;
+begin
+  if not coalesce(public.is_pipo_owner(), false) then
+    raise exception 'No autorizado';
+  end if;
+
+  select * into s_row from public.sales where id = target_sale_id for update;
+  if s_row.id is null then
+    raise exception 'Pedido no encontrado.';
+  end if;
+  if s_row.order_source <> 'web' or s_row.status <> 'pending_delivery' then
+    raise exception 'Solo se pueden confirmar pedidos web pendientes de entrega.';
+  end if;
+
+  if s_row.balance_due > 0 then
+    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
+    values (s_row.id, s_row.balance_due, 'yape',
+      case when s_row.amount_paid > 0 then 'delivery_balance' else 'full_payment' end,
+      'Recepción de Yape confirmada manualmente por propietario');
+  end if;
+
+  update public.sales
+  set amount_paid = total_charged,
+      balance_due = 0,
+      payment_verification_status = 'verified_manual'
+  where id = s_row.id
+  returning * into s_row;
+
+  return jsonb_build_object(
+    'saleId', s_row.id,
+    'saleCode', s_row.code,
+    'verificationStatus', s_row.payment_verification_status,
+    'isPaid', true
+  );
+end;
+$$;
+
 grant execute on function public.normalize_person_name(text) to anon, authenticated;
 grant execute on function public.get_public_storefront_catalog() to anon, authenticated;
 grant execute on function public.wake_and_check_yape_gateway() to anon, authenticated;
 grant execute on function public.create_web_storefront_order(jsonb) to anon, authenticated;
 grant execute on function public.check_web_order_yape_status(uuid) to anon, authenticated;
-grant execute on function public.register_incoming_yape_notification(text, numeric, text, text) to anon, authenticated;
-grant execute on function public.ingest_yape_android_webhook(text, text) to anon, authenticated;
+-- Revoke PUBLIC as well: PostgreSQL grants function EXECUTE to PUBLIC by default.
+revoke execute on function public.register_incoming_yape_notification(text, numeric, text, text) from public, anon;
+revoke execute on function public.ingest_yape_android_webhook(text, text) from public, anon;
+grant execute on function public.register_incoming_yape_notification(text, numeric, text, text) to authenticated, service_role;
+grant execute on function public.ingest_yape_android_webhook(text, text) to authenticated, service_role;
+revoke execute on function public.confirm_web_order_payment_manual(uuid) from public, anon;
+grant execute on function public.confirm_web_order_payment_manual(uuid) to authenticated, service_role;
