@@ -48,6 +48,7 @@ function getCategoryEmoji(category = '') {
 
 function getZoneLabel(zoneType = '') {
   switch (zoneType) {
+    case 'unac':
     case 'universidad':
       return '🎓 Campus Universitario';
     case 'estacion_tren':
@@ -56,6 +57,44 @@ function getZoneLabel(zoneType = '') {
       return '🛍️ Centro Comercial';
     default:
       return '📍 Punto de Encuentro';
+  }
+}
+
+const STOREFRONT_CART_KEY = 'glow_with_pipo_cart_v1';
+
+function readStoredCart() {
+  try {
+    const raw = localStorage.getItem(STOREFRONT_CART_KEY);
+    if (!raw || raw.length > 1000000) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const items = new Map();
+    for (const item of parsed.slice(0, 200)) {
+      if (!item || typeof item !== 'object'
+        || typeof item.variantId !== 'string' || !item.variantId
+        || typeof item.productId !== 'string' || !item.productId
+        || !Number.isSafeInteger(item.quantity) || item.quantity <= 0
+        || !Number.isSafeInteger(item.maxStock) || item.maxStock < item.quantity
+        || !Number.isFinite(item.appliedUnitPrice) || item.appliedUnitPrice < 0) continue;
+      const pricingMode = item.pricingMode === 'individual' ? 'unit' : item.pricingMode;
+      if (!['unit', 'combo'].includes(pricingMode)) continue;
+      const sourceComboId = pricingMode === 'combo' && typeof item.sourceComboId === 'string' ? item.sourceComboId : null;
+      if (pricingMode === 'combo' && !sourceComboId) continue;
+      const cartKey = `${item.variantId}__${pricingMode}__${sourceComboId || 'unit'}`;
+      const previous = items.get(cartKey);
+      const text = (name) => typeof item[name] === 'string' ? item[name] : '';
+      items.set(cartKey, {
+        cartKey, variantId: item.variantId, productId: item.productId,
+        productName: text('productName'), category: text('category'), imageUrl: text('imageUrl'),
+        shadeName: text('shadeName'), colorHex: text('colorHex') || null,
+        maxStock: item.maxStock, quantity: Math.min(item.maxStock, (previous?.quantity || 0) + item.quantity),
+        appliedUnitPrice: item.appliedUnitPrice, pricingMode, sourceComboId,
+        sourceComboName: text('sourceComboName')
+      });
+    }
+    return [...items.values()];
+  } catch {
+    return [];
   }
 }
 
@@ -327,7 +366,15 @@ export default function StorefrontView({
   }
 
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState({});
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(readStoredCart);
+  useEffect(() => {
+    try {
+      if (cart.length) localStorage.setItem(STOREFRONT_CART_KEY, JSON.stringify(cart));
+      else localStorage.removeItem(STOREFRONT_CART_KEY);
+    } catch {
+      // Storage may be unavailable or full; the active cart remains usable.
+    }
+  }, [cart]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [justAddedKey, setJustAddedKey] = useState(null);
 
@@ -797,7 +844,7 @@ export default function StorefrontView({
       variantId: activeVar.id,
       quantity: Math.min(detailQty, activeVar.stock),
       appliedUnitPrice: detailProduct.unitPrice,
-      pricingMode: 'individual'
+      pricingMode: 'unit'
     });
 
     setJustAddedKey(`prod-${detailProduct.id}`);
@@ -813,10 +860,30 @@ export default function StorefrontView({
     }
   }
 
+  const detailComboMaxQty = useMemo(() => {
+    if (!detailCombo?.comboMeta.isAvailable) return 0;
+    const required = new Map();
+    for (const [index, item] of detailCombo.comboMeta.detailedItems.entries()) {
+      const id = detailComboShadeChoices[index] || item.fixedVariant?.id || item.availableVariants[0]?.id;
+      if (!id || !allVariantsById.has(id)) return 0;
+      required.set(id, (required.get(id) || 0) + Math.max(1, Number(item.quantity || 1)));
+    }
+    if (!required.size) return 0;
+    return Math.max(0, Math.min(...[...required].map(([id, quantity]) => {
+      const inCart = cart.filter((item) => item.variantId === id).reduce((sum, item) => sum + item.quantity, 0);
+      return Math.floor((Number(allVariantsById.get(id).stock || 0) - inCart) / quantity);
+    })));
+  }, [detailCombo, detailComboShadeChoices, allVariantsById, cart]);
+
+  useEffect(() => {
+    if (detailCombo) setDetailQty((quantity) => Math.max(1, Math.min(quantity, detailComboMaxQty)));
+  }, [detailCombo, detailComboMaxQty]);
+
   function handleAddDetailComboToCart(buyNow = false) {
     if (!detailCombo) return;
     const { combo, comboMeta } = detailCombo;
-    if (!comboMeta.isAvailable) return;
+    const packsToAdd = Math.min(detailQty, detailComboMaxQty);
+    if (!comboMeta.isAvailable || packsToAdd <= 0) return;
 
     comboMeta.detailedItems.forEach((di, idx) => {
       const chosenVarId =
@@ -824,7 +891,7 @@ export default function StorefrontView({
       if (chosenVarId) {
         addVariantToCart({
           variantId: chosenVarId,
-          quantity: di.quantity * Math.max(1, detailQty),
+          quantity: Math.max(1, Number(di.quantity || 1)) * packsToAdd,
           appliedUnitPrice: di.unitComboPrice,
           pricingMode: 'combo',
           sourceComboId: combo.id,
@@ -2645,8 +2712,8 @@ export default function StorefrontView({
                           <button
                             type="button"
                             className="pipo-qty-btn"
-                            disabled={!detailCombo.comboMeta.isAvailable}
-                            onClick={() => setDetailQty((q) => q + 1)}
+                            disabled={!detailCombo.comboMeta.isAvailable || detailQty >= detailComboMaxQty}
+                            onClick={() => setDetailQty((q) => Math.min(detailComboMaxQty, q + 1))}
                           >
                             <Plus size={14} />
                           </button>
@@ -2662,7 +2729,7 @@ export default function StorefrontView({
                       <div className="pipo-detail-btn-group">
                         <button
                           type="button"
-                          disabled={!detailCombo.comboMeta.isAvailable}
+                          disabled={!detailCombo.comboMeta.isAvailable || detailComboMaxQty <= 0}
                           className="btn btn-primary pipo-detail-add-cart-btn"
                           onClick={() => handleAddDetailComboToCart(false)}
                         >
@@ -2672,7 +2739,7 @@ export default function StorefrontView({
 
                         <button
                           type="button"
-                          disabled={!detailCombo.comboMeta.isAvailable}
+                          disabled={!detailCombo.comboMeta.isAvailable || detailComboMaxQty <= 0}
                           className="btn pipo-detail-buy-now-btn"
                           onClick={() => handleAddDetailComboToCart(true)}
                         >

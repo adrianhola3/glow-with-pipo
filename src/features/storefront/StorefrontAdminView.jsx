@@ -35,6 +35,7 @@ export default function StorefrontAdminView({
   onUpdateStorefrontMerchandising,
   onUpdateYapeGateway,
   onSimulateYapeNotification,
+  onConfirmWebOrderManual,
   onOpenPublicStorefront,
   onNavigateToSales
 }) {
@@ -43,7 +44,7 @@ export default function StorefrontAdminView({
   // Delivery Point Form State
   const [editingPointId, setEditingPointId] = useState(null);
   const [pointName, setPointName] = useState('');
-  const [pointZone, setPointZone] = useState('universidad');
+  const [pointZone, setPointZone] = useState('unac');
   const [pointRef, setPointRef] = useState('');
 
   // Delivery Slot Form State
@@ -147,7 +148,7 @@ export default function StorefrontAdminView({
   function handleEditPoint(pt) {
     setEditingPointId(pt.id);
     setPointName(pt.name);
-    setPointZone(pt.zoneType || 'punto_especifico');
+    setPointZone(pt.zoneType === 'universidad' ? 'unac' : (pt.zoneType || 'punto_especifico'));
     setPointRef(pt.referenceInfo || '');
   }
 
@@ -389,7 +390,7 @@ export default function StorefrontAdminView({
                 <div className="field">
                   <label>Tipo de Zona</label>
                   <select value={pointZone} onChange={(e) => setPointZone(e.target.value)}>
-                    <option value="universidad">🎓 Campus Universitario (UNAC)</option>
+                    <option value="unac">🎓 Campus Universitario (UNAC)</option>
                     <option value="estacion_tren">🚆 Estación de Tren Eléctrico</option>
                     <option value="centro_comercial">🛍️ Centro Comercial / Mall</option>
                     <option value="punto_especifico">📍 Otro Punto Específico</option>
@@ -1095,11 +1096,15 @@ export default function StorefrontAdminView({
                             onClick={async () => {
                               setSimulating(true);
                               try {
-                                await onSimulateYapeNotification({
-                                  senderName: sale.yapeHolderName || cust?.name || '',
-                                  amount: Number(sale.totalCharged),
-                                  operationCode: 'APROBADO-ERP'
-                                });
+                                if (onConfirmWebOrderManual) {
+                                  await onConfirmWebOrderManual(sale.id);
+                                } else {
+                                  await onSimulateYapeNotification({
+                                    senderName: sale.yapeHolderName || cust?.name || '',
+                                    amount: Number(sale.totalCharged),
+                                    operationCode: 'APROBADO-ERP'
+                                  });
+                                }
                               } finally {
                                 setSimulating(false);
                               }
