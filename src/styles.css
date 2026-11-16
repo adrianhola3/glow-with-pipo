@@ -3725,3 +3725,52 @@ select:hover,
 
 
 
+
+/* Catalog discovery: retain the storefront's existing coquette palette. */
+html:has(.pipo-storefront), body:has(.pipo-storefront) { overflow-x: clip; }
+.pipo-storefront { overflow-x: clip; }
+.pipo-store-sticky-shell { position: sticky; top: 0; z-index: 100; }
+.pipo-store-sticky-shell .pipo-staff-floating-bar,
+.pipo-store-sticky-shell .pipo-store-navbar { position: relative; top: auto; }
+.pipo-discovery {
+  position: sticky;
+  top: var(--pipo-header-height, 0px);
+  z-index: 80;
+  padding: 14px 0 10px;
+  background: var(--pipo-surface);
+  border-bottom: 1px solid var(--pipo-border, #ecd0c4);
+}
+.pipo-discovery[hidden] { display: none; }
+.pipo-discovery-controls { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: end; }
+.pipo-discovery-search {
+  display: flex; align-items: center; min-width: 0; gap: 8px;
+  background: #fff; border: 1px solid var(--pipo-border, #ecd0c4); border-radius: 24px; padding-left: 14px;
+  color: var(--pipo-rose, var(--pipo-rosewood));
+}
+.pipo-discovery-search input {
+  width: 100%; min-width: 0; min-height: 44px; border: 0; border-radius: 24px;
+  background: transparent; color: var(--pipo-espresso); box-shadow: none; padding: 10px 0;
+}
+.pipo-discovery-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.pipo-discovery-search button {
+  flex: 0 0 44px; height: 44px; display: grid; place-items: center;
+  border: 0; background: transparent; color: var(--pipo-burgundy); border-radius: 50%;
+}
+.pipo-discovery-search:focus-within { outline: 2px solid var(--pipo-burgundy); outline-offset: 2px; }
+.pipo-discovery-select { display: grid; gap: 3px; min-width: 0; font-size: .75rem; color: var(--pipo-burgundy); font-weight: 700; }
+.pipo-discovery-select select { width: 100%; min-width: 0; min-height: 44px; color: var(--pipo-burgundy); background-color: var(--pipo-ivory); border-color: var(--pipo-border, #ecd0c4); font-size: .85rem; padding: 8px; border-radius: 14px; }
+.pipo-discovery :is(button, input, select):focus-visible { outline: 2px solid var(--pipo-burgundy); outline-offset: 2px; }
+.pipo-discovery-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 8px; font-size: .78rem; color: var(--pipo-muted); }
+.pipo-discovery-status > span { overflow-wrap: anywhere; flex: 1 1 200px; }
+.pipo-discovery-status small { font-size: .7rem; }
+.pipo-discovery-status button { min-height: 44px; border: 0; background: transparent; color: var(--pipo-burgundy); font: inherit; font-weight: 700; text-decoration: underline; }
+.pipo-catalog-results { scroll-margin-top: calc(var(--pipo-header-height, 0px) + var(--pipo-discovery-height, 0px) + 12px); }
+@media (max-width: 700px) {
+  .pipo-discovery { padding-top: 10px; }
+  .pipo-discovery-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .pipo-discovery-search { grid-column: 1 / -1; }
+  .pipo-discovery-search input, .pipo-discovery-select select { font-size: 1rem; }
+  .pipo-discovery-status { gap: 0 8px; }
+  .pipo-discovery-status small { flex-basis: 100%; }
+  .pipo-store-sticky-shell .pipo-staff-bar-inner { flex-wrap: wrap; justify-content: center; text-align: center; }
+}

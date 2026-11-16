@@ -22,6 +22,7 @@ import {
   Wifi,
   X
 } from 'lucide-react';
+import { matchesCatalogSearch, sortCatalogItems } from './catalogDiscovery.js';
 import { formatMoney } from '../../domain/calculations.js';
 import { PRODUCT_CATEGORIES } from '../../domain/constants.js';
 import {
@@ -265,6 +266,64 @@ export default function StorefrontView({
   });
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [catalogOrder, setCatalogOrder] = useState('recommended');
+  const storefrontRef = useRef(null);
+  const headerRef = useRef(null);
+  const discoveryRef = useRef(null);
+  const resultsRef = useRef(null);
+  const searchRef = useRef(null);
+  const revealResultsRef = useRef(false);
+
+  useEffect(() => {
+    const update = () => {
+      storefrontRef.current?.style.setProperty('--pipo-header-height', `${headerRef.current?.getBoundingClientRect().height || 0}px`);
+      storefrontRef.current?.style.setProperty('--pipo-discovery-height', `${discoveryRef.current?.getBoundingClientRect().height || 0}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    if (headerRef.current) observer.observe(headerRef.current);
+    if (discoveryRef.current) observer.observe(discoveryRef.current);
+    return () => observer.disconnect();
+  }, [isStaffLoggedIn]);
+
+  function scrollToCatalogResults() {
+    if (!resultsRef.current) return;
+    const top = window.scrollY + resultsRef.current.getBoundingClientRect().top
+      - (headerRef.current?.getBoundingClientRect().height || 0)
+      - (discoveryRef.current?.getBoundingClientRect().height || 0) - 12;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+  }
+
+  const revealResults = () => { revealResultsRef.current = true; };
+  useEffect(() => {
+    if (!revealResultsRef.current) return;
+    revealResultsRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      scrollToCatalogResults();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeCategory, catalogOrder, searchQuery]);
+
+  function updateSearchQuery(value) {
+    const resultsTop = resultsRef.current?.getBoundingClientRect().top;
+    const controlsBottom = discoveryRef.current?.getBoundingClientRect().bottom;
+    if (resultsTop < controlsBottom - 1) revealResultsRef.current = true;
+    setSearchQuery(value);
+  }
+
+  function navigateToCategory(category) {
+    setActiveCategory(category);
+    requestAnimationFrame(() => scrollToCatalogResults());
+  }
+
+  function resetDiscovery() {
+    setSearchQuery('');
+    setActiveCategory('ALL');
+    setCatalogOrder('recommended');
+    searchRef.current?.focus({ preventScroll: true });
+    requestAnimationFrame(() => scrollToCatalogResults());
+  }
+
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState({});
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -469,33 +528,24 @@ export default function StorefrontView({
 
   const filteredProducts = useMemo(() => {
     if (activeCategory === 'COMBOS') return [];
-    const q = searchQuery.trim().toLowerCase();
-    return (catalog.products || []).filter((p) => {
-      const totalStock = (p.variants || []).reduce((acc, v) => acc + (v.stock || 0), 0);
+    return sortCatalogItems((catalog.products || []).filter((p) => {
+      const totalStock = (p.variants || []).reduce((total, v) => total + (v.stock || 0), 0);
       if (totalStock <= 0) return false;
       if (activeCategory !== 'ALL' && p.category !== activeCategory) return false;
-      if (!q) return true;
-      return (
-        p.name.toLowerCase().includes(q) ||
-        (p.brand || '').toLowerCase().includes(q) ||
-        (p.category || '').toLowerCase().includes(q) ||
-        (p.publicDescription || '').toLowerCase().includes(q)
-      );
-    });
-  }, [catalog.products, activeCategory, searchQuery]);
+      return matchesCatalogSearch(p, searchQuery);
+    }), catalogOrder);
+  }, [catalog.products, activeCategory, searchQuery, catalogOrder]);
 
   const filteredCombos = useMemo(() => {
     if (activeCategory !== 'ALL' && activeCategory !== 'COMBOS') return [];
-    const q = searchQuery.trim().toLowerCase();
-    return (catalog.combos || []).filter((c) => {
-      if (!q) return true;
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.description || '').toLowerCase().includes(q) ||
-        (c.publicDescription || '').toLowerCase().includes(q)
-      );
-    });
-  }, [catalog.combos, activeCategory, searchQuery]);
+    return sortCatalogItems((catalog.combos || []).filter((c) =>
+      matchesCatalogSearch(c, searchQuery)), catalogOrder, (combo) =>
+      (combo.items || []).reduce((total, item) => {
+        const product = productsById.get(item.productId);
+        return total + Number(item.customComboUnitPrice ?? (product?.comboPrice || product?.unitPrice || 0))
+          * Math.max(1, Number(item.quantity || 1));
+      }, 0));
+  }, [catalog.combos, activeCategory, searchQuery, catalogOrder, productsById]);
 
   const availableSlotsForPoint = useMemo(() => {
     return (catalog.deliverySlots || []).filter(
@@ -912,7 +962,8 @@ export default function StorefrontView({
   }
 
   return (
-    <div className="pipo-storefront">
+    <div className="pipo-storefront" ref={storefrontRef}>
+      <div className="pipo-store-sticky-shell" ref={headerRef}>
       {/* Top Staff Return Bar if Adrián or Fabiana are viewing the storefront */}
       {isStaffLoggedIn && (
         <div className="pipo-staff-floating-bar">
@@ -940,7 +991,7 @@ export default function StorefrontView({
       {/* Sticky Coquette Navbar */}
       <header className="pipo-store-navbar">
         <div className="pipo-store-navbar-inner">
-          <div className="pipo-store-brand" onClick={() => setActiveCategory('ALL')}>
+          <div className="pipo-store-brand" onClick={() => navigateToCategory('ALL')}>
             <img
               src={`${import.meta.env.BASE_URL || './'}icon-192.png`}
               alt="Glow with Pipo"
@@ -958,14 +1009,14 @@ export default function StorefrontView({
             <button
               type="button"
               className={`pipo-store-navlink ${activeCategory === 'ALL' ? 'active' : ''}`}
-              onClick={() => setActiveCategory('ALL')}
+              onClick={() => navigateToCategory('ALL')}
             >
               Catálogo
             </button>
             <button
               type="button"
               className={`pipo-store-navlink ${activeCategory === 'COMBOS' ? 'active' : ''}`}
-              onClick={() => setActiveCategory('COMBOS')}
+              onClick={() => navigateToCategory('COMBOS')}
             >
               ✨ Combos Pipo
             </button>
@@ -1001,6 +1052,7 @@ export default function StorefrontView({
           </div>
         </div>
       </header>
+      </div>
 
       {/* Coquette Hero Section */}
       <section className="pipo-store-hero pipo-stripes">
@@ -1025,62 +1077,68 @@ export default function StorefrontView({
             Coordinamos tu entrega en <strong>UNAC, estaciones del tren o puntos acordados</strong>.
           </p>
 
-          {/* Search & Category Filter Bar */}
-          <div className="pipo-store-search-wrap">
-            <Search size={18} className="pipo-store-search-icon" />
-            <input
-              type="text"
-              placeholder="Buscar labiales, rubores, tonos o combos..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pipo-store-search-input"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="pipo-store-search-clear"
-                onClick={() => setSearchQuery('')}
-              >
-                <X size={15} />
-              </button>
-            )}
-          </div>
         </div>
       </section>
 
-      {/* Main Storefront Content */}
       <main className="pipo-store-main">
-        {/* Category Pills Carousel */}
-        <div className="pipo-store-categories" data-no-swipe="true">
-          <button
-            type="button"
-            className={`pipo-cat-pill ${activeCategory === 'ALL' ? 'active' : ''}`}
-            onClick={() => setActiveCategory('ALL')}
-          >
-            🌸 Todos {catalog.products?.length ? `(${catalog.products.length})` : ''}
-          </button>
-          {(catalog.combos || []).length > 0 && (
-            <button
-              type="button"
-              className={`pipo-cat-pill combo-pill ${activeCategory === 'COMBOS' ? 'active' : ''}`}
-              onClick={() => setActiveCategory('COMBOS')}
-            >
-              ✨ Combos Especiales ({(catalog.combos || []).length})
-            </button>
-          )}
-          {availableCategories.map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              className={`pipo-cat-pill ${activeCategory === cat ? 'active' : ''}`}
-              onClick={() => setActiveCategory(cat)}
-            >
-              <span>{getCategoryEmoji(cat)}</span>
-              <span>{cat}</span>
-            </button>
-          ))}
+        <div className="pipo-discovery" ref={discoveryRef}
+          hidden={Boolean(checkoutOpen || customizingCombo || isCartOpen || detailProduct || detailCombo)}
+          aria-label="Explorar catálogo" role="region">
+          <div className="pipo-discovery-controls">
+            <div className="pipo-discovery-search">
+              <Search size={18} aria-hidden="true" />
+              <input ref={searchRef} type="search" aria-label="Buscar productos, tonos o combos"
+                placeholder="Buscar productos, tonos o combos…" value={searchQuery}
+                onChange={(e) => updateSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    scrollToCatalogResults();
+                  }
+                }} />
+              {searchQuery && <button type="button" aria-label="Limpiar búsqueda"
+                onClick={() => { updateSearchQuery(''); searchRef.current?.focus({ preventScroll: true }); }}>
+                <X size={17} />
+              </button>}
+            </div>
+            <label className="pipo-discovery-select">
+              <span>Categoría</span>
+              <select aria-label="Categoría" value={activeCategory} onChange={(e) => { revealResults(); setActiveCategory(e.target.value); }}>
+                <option value="ALL">Todas las categorías</option>
+                <option value="COMBOS">Combos especiales</option>
+                {availableCategories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+              </select>
+            </label>
+            <label className="pipo-discovery-select">
+              <span>Ordenar por</span>
+              <select aria-label="Ordenar por" value={catalogOrder} onChange={(e) => { revealResults(); setCatalogOrder(e.target.value); }}>
+                <option value="recommended">Recomendados</option>
+                <option value="price-asc">Precio: menor a mayor</option>
+                <option value="price-desc">Precio: mayor a menor</option>
+                <option value="name">Nombre: A–Z</option>
+              </select>
+            </label>
+          </div>
+          <div className="pipo-discovery-status">
+            <span role="status" aria-live="polite" aria-atomic="true">
+              {loadingCatalog ? 'Cargando catálogo…' : `${filteredProducts.length} productos · ${filteredCombos.length} combos`}
+              {activeCategory !== 'ALL' && ` · ${activeCategory === 'COMBOS' ? 'Combos especiales' : activeCategory}`}
+              {searchQuery.trim() && ` · “${searchQuery.trim()}”`}
+            </span>
+            {(searchQuery || activeCategory !== 'ALL' || catalogOrder !== 'recommended') &&
+              <button type="button" onClick={resetDiscovery}>Restablecer</button>}
+            <small>Orden dentro de cada sección</small>
+          </div>
         </div>
-
+        <div ref={resultsRef} className="pipo-catalog-results" />
+        {!loadingCatalog && filteredProducts.length === 0 && filteredCombos.length === 0 && (
+          <div className="pipo-empty-catalog">
+            <Sparkles size={28} aria-hidden="true" />
+            <h3>No encontramos resultados</h3>
+            <p>Prueba otro nombre, tono o categoría.</p>
+            <button type="button" className="btn btn-secondary" onClick={resetDiscovery}>Ver todo el catálogo</button>
+          </div>
+        )}
         {loadingCatalog ? (
           <StorefrontSkeletonGrid />
         ) : (
@@ -1206,7 +1264,7 @@ export default function StorefrontView({
             )}
 
             {/* Individual Products Section */}
-            {activeCategory !== 'COMBOS' && (
+            {activeCategory !== 'COMBOS' && filteredProducts.length > 0 && (
               <section className="pipo-store-section">
                 <div className="pipo-store-section-header">
                   <div>
