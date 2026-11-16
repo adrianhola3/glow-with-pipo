@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Cloud,
@@ -80,14 +80,16 @@ import {
   syncStateToSupabase,
   updateLocalOwnerAccount
 } from './adapters/storageRepository.js';
+import * as storageRepo from './adapters/storageRepository.js';
 import LoginView from './features/auth/LoginView.jsx';
-import DashboardView from './features/dashboard/DashboardView.jsx';
-import InventoryView from './features/inventory/InventoryView.jsx';
-import RestocksView from './features/restocks/RestocksView.jsx';
-import SalesView from './features/sales/SalesView.jsx';
-import SettingsView from './features/settings/SettingsView.jsx';
 import StorefrontView from './features/storefront/StorefrontView.jsx';
-import StorefrontAdminView from './features/storefront/StorefrontAdminView.jsx';
+
+const DashboardView = React.lazy(() => import('./features/dashboard/DashboardView.jsx'));
+const InventoryView = React.lazy(() => import('./features/inventory/InventoryView.jsx'));
+const RestocksView = React.lazy(() => import('./features/restocks/RestocksView.jsx'));
+const SalesView = React.lazy(() => import('./features/sales/SalesView.jsx'));
+const SettingsView = React.lazy(() => import('./features/settings/SettingsView.jsx'));
+const StorefrontAdminView = React.lazy(() => import('./features/storefront/StorefrontAdminView.jsx'));
 
 export default function App() {
   const [session, setSession] = useState(() => getSavedSession());
@@ -416,10 +418,10 @@ export default function App() {
     [notify]
   );
 
-  // Periodic update check every 20 seconds, plus on visibility/focus/online
+  // Periodic update check every 5 minutes, plus on visibility/focus/online
   useEffect(() => {
     checkForAppUpdate(true);
-    const timer = setInterval(() => checkForAppUpdate(true), 20000);
+    const timer = setInterval(() => checkForAppUpdate(true), 300000);
 
     function onFocusOrVisible() {
       if (document.visibilityState === 'visible' && navigator.onLine) {
@@ -507,6 +509,37 @@ export default function App() {
     } else {
       if (successMsg) notify(successMsg);
     }
+  }
+
+  async function handleConfirmWebOrderManual(saleId) {
+    // Capability lookup keeps older repository builds safe until the manual API is available.
+    const capability = (name) => storageRepo[name];
+    const applyManual = capability('applyConfirmWebOrderManual');
+    const confirmManual = capability('confirmWebOrderManual');
+    if (isProtectedMode || session?.mode !== 'supabase' || !getSupabaseConfig()) {
+      notify('La confirmación manual requiere conexión y una sesión de Supabase activa.', true);
+      return;
+    }
+    if (typeof confirmManual !== 'function') {
+      notify('La confirmación manual no está disponible en esta versión del repositorio.', true);
+      return;
+    }
+    await commitMutation({
+      optimisticFn: (current) => {
+        if (typeof applyManual !== 'function') return current;
+        const result = applyManual(current, saleId);
+        const next = result?.db || result;
+        if (!next || !Array.isArray(next.sales)) throw new Error('Respuesta local de confirmación inválida.');
+        return next;
+      },
+      cloudFn: async () => {
+        const result = await confirmManual(saleId);
+        if (result?.db && Array.isArray(result.db.sales)) return result.db;
+        if (result && Array.isArray(result.sales)) return result;
+        return fetchSupabaseDatabase();
+      },
+      successMsg: 'Pedido confirmado manualmente.'
+    });
   }
 
   async function handleRequestNotifications() {
@@ -724,6 +757,7 @@ export default function App() {
         )}
 
         <main className="page-container">
+          <Suspense fallback={<div className="card" role="status">Cargando vista…</div>}>
           {activeTab === 'dashboard' && (
             <DashboardView
               metrics={metrics}
@@ -895,6 +929,7 @@ export default function App() {
 
           {activeTab === 'storefront' && (
             <StorefrontAdminView
+              onConfirmWebOrderManual={handleConfirmWebOrderManual}
               db={db}
               onSaveDeliveryPoint={(payload) =>
                 commitMutation({
@@ -1004,6 +1039,7 @@ export default function App() {
               onNotify={notify}
             />
           )}
+          </Suspense>
         </main>
 
         {/* Mobile Bottom Tab Bar */}
