@@ -28,3 +28,12 @@ Validación prevista: npm test/build, fixtures catálogo público solo lectura, 
 
 - Ajustes finales: controles móviles16px; navegación Catálogo/Combos alinea incluso misma categoría. Búsqueda desde profundo alinea una vez sin Enter y conserva foco; siguientes teclas no desplazan si resultados ya están alineados.
 - Caso adicional de búsqueda profunda: primera prueba detectó altura de barra cambiada al mostrar Restablecer; se corrigió midiendo alturas actuales para scroll. Segunda ejecución pasó búsqueda/foco pero comprobó cabecera antes del requestAnimationFrame; al esperar ese frame, tercera ejecución aprobada. Fallos preservados aquí; no confundir timing de test con bug de UI.
+
+## Ajuste de dropdowns (posterior)
+Referencias usuario: codex-clipboard-32805ee3-8845-4f05-ac0c-6fe4304e2780.png (doble foco) y codex-clipboard-659cc0f2-73ff-435f-a658-dfb82bcefa49.png (popup azul nativo).
+Categoría/orden ahora comparten StorefrontSelect, patrón select-only combobox con listbox en portal. Foco DOM en trigger, aria-activedescendant para opción activa, selección borgoña y check, navegación/typeahead/Enter/Space/Escape/Tab. Panel dentro del viewport, scroll interno, cierre por scroll externo y reposición al resize (incluido visualViewport al cambiar teclado). Touch no cancela pointerdown; sin cambios en selector compartido ERP.
+Buscador: un outline focus-within en wrapper; input scoped sin outline/border/box-shadow de foco.
+Fuentes APG: https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/ y https://www.w3.org/WAI/ARIA/apg/patterns/listbox/. Implementación propia; falta validación con lector de pantalla y teléfono reales.
+
+QA del ajuste: build y25tests aprobaron la primera implementación; matriz headless con menús abiertos360/390/430/1280 y360x320 aprobó mouse/teclado/typeahead/Tab/Escape/outside/scroll/cart. Tras reposición resize, la misma matriz volvió a pasar.
+Resolución touch (post-swipe tap): se añadió confirmación directa en `onPointerUp` para puntero táctil estacionario (mismo `pointerId`, desplazamiento <= 10px y `scrollTop` idéntico al `onPointerDown`), con `ignoreCompatibilityClick` para evitar doble disparo si llega un click sintético posterior. Verificado en componente aislado y en vista integrada 360x844 (`PASS integrated 360 844 true`) y validado por Agente C tras swipe.

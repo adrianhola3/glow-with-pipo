@@ -22,6 +22,7 @@ import {
   Wifi,
   X
 } from 'lucide-react';
+import StorefrontSelect from './StorefrontSelect.jsx';
 import { matchesCatalogSearch, sortCatalogItems } from './catalogDiscovery.js';
 import { formatMoney } from '../../domain/calculations.js';
 import { PRODUCT_CATEGORIES } from '../../domain/constants.js';
@@ -266,6 +267,7 @@ export default function StorefrontView({
   });
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [openDiscoveryPicker, setOpenDiscoveryPicker] = useState(null);
   const [catalogOrder, setCatalogOrder] = useState('recommended');
   const storefrontRef = useRef(null);
   const headerRef = useRef(null);
@@ -362,6 +364,9 @@ export default function StorefrontView({
   const [checkingPayment, setCheckingPayment] = useState(false);
   const [manualCheckHint, setManualCheckHint] = useState('');
   const [copiedPhone, setCopiedPhone] = useState(false);
+
+  const discoveryDisabled = Boolean(checkoutOpen || customizingCombo || isCartOpen || detailProduct || detailCombo);
+  useEffect(() => { if (discoveryDisabled) setOpenDiscoveryPicker(null); }, [discoveryDisabled]);
 
   // Lock body scroll when modal, detail view or cart drawer is open
   useEffect(() => {
@@ -1101,23 +1106,19 @@ export default function StorefrontView({
                 <X size={17} />
               </button>}
             </div>
-            <label className="pipo-discovery-select">
-              <span>Categoría</span>
-              <select aria-label="Categoría" value={activeCategory} onChange={(e) => { revealResults(); setActiveCategory(e.target.value); }}>
-                <option value="ALL">Todas</option>
-                <option value="COMBOS">Combos</option>
-                {availableCategories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-              </select>
-            </label>
-            <label className="pipo-discovery-select">
-              <span>Ordenar por</span>
-              <select aria-label="Ordenar por" value={catalogOrder} onChange={(e) => { revealResults(); setCatalogOrder(e.target.value); }}>
-                <option value="recommended">Recomendados</option>
-                <option value="price-asc">Menor precio</option>
-                <option value="price-desc">Mayor precio</option>
-                <option value="name">Nombre: A–Z</option>
-              </select>
-            </label>
+            <StorefrontSelect label="Categoría" value={activeCategory}
+              options={[{ value: 'ALL', label: 'Todas' }, { value: 'COMBOS', label: 'Combos' },
+                ...availableCategories.map((cat) => ({ value: cat, label: cat }))]}
+              open={openDiscoveryPicker === 'category'} disabled={discoveryDisabled}
+              onOpenChange={(open) => setOpenDiscoveryPicker(open ? 'category' : null)}
+              onChange={(value) => { revealResults(); setActiveCategory(value); }} />
+            <StorefrontSelect label="Ordenar por" value={catalogOrder}
+              options={[{ value: 'recommended', label: 'Recomendados' },
+                { value: 'price-asc', label: 'Menor precio' }, { value: 'price-desc', label: 'Mayor precio' },
+                { value: 'name', label: 'Nombre: A–Z' }]}
+              open={openDiscoveryPicker === 'order'} disabled={discoveryDisabled}
+              onOpenChange={(open) => setOpenDiscoveryPicker(open ? 'order' : null)}
+              onChange={(value) => { revealResults(); setCatalogOrder(value); }} />
           </div>
           <div className="pipo-discovery-status">
             <span role="status" aria-live="polite" aria-atomic="true">
