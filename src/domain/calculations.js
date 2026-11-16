@@ -275,15 +275,77 @@ export function computeSaleTotals({
   };
 }
 
-export function computeDashboardMetrics({
-  products = [],
-  variants = [],
-  supplies = [],
-  restocks = [],
-  sales = [],
-  suppliers = [],
-  customers = []
-}) {
+// Date-only business fields keep their calendar day. Instants use the shop's
+// timezone so midnight UTC does not move a receipt into the wrong Lima period.
+const businessDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
+function businessDay(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : null;
+  }
+  if (value === null || value === undefined || value === '') return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return businessDayFormatter.format(date);
+}
+
+function periodMatcher(period, referenceDate) {
+  if (period === 'all') return () => true;
+  const end = businessDay(referenceDate ?? new Date());
+  if (!end) throw new RangeError('Fecha de referencia inválida');
+  let start = end;
+  if (period === 'month') start = `${end.slice(0, 7)}-01`;
+  if (period === '7d') {
+    const date = new Date(`${end}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - 6);
+    start = date.toISOString().slice(0, 10);
+  }
+  return (value) => {
+    const day = businessDay(value);
+    return day !== null && day >= start && day <= end;
+  };
+}
+
+export function formatSaleWhatsAppTicket(sale = {}, customer = {}) {
+  const text = (value, fallback) => String(value || fallback).replace(/[\r\n]+/g, ' ').trim();
+  const lines = (sale.items || []).map((item) => {
+    const product = text(item.productNameSnapshot, 'Producto');
+    const shade = item.shadeNameSnapshot ? ` · ${text(item.shadeNameSnapshot, '')}` : '';
+    return `• ${Math.max(1, Math.trunc(toNumber(item.quantity, 1)))} × ${product}${shade}`;
+  });
+  return [
+    '🎀 *Glow with Pipo*',
+    `*Pedido ${text(sale.code, 'Sin código')}*`,
+    ...(sale.status === 'cancelled' ? ['*Pedido cancelado*'] : []),
+    `Clienta: ${text(customer?.name, 'Cliente')}`,
+    '',
+    ...lines,
+    '',
+    `*Total: ${formatCurrency(sale.totalCharged)}*`,
+    `Adelanto pagado: ${formatCurrency(sale.amountPaid)}`,
+    `*Saldo pendiente: ${formatCurrency(sale.balanceDue)}*`,
+    '',
+    `📍 Entrega: ${text(sale.deliveryLocation, 'Por coordinar')}`,
+    `📅 Fecha: ${text(sale.deliveryDate, 'Por coordinar')}`,
+    `🕒 Horario: ${text(sale.deliveryTime, 'Por coordinar')}`
+  ].join('\n');
+}
+
+export function computeDashboardMetrics(db, options = {}) {
+  const {
+    products = [],
+    variants = [],
+    supplies = [],
+    restocks = [],
+    sales = [],
+    suppliers = [],
+    customers = []
+  } = db;
+  const period = ['today', '7d', 'month'].includes(options.period) ? options.period : 'all';
+  const inPeriod = periodMatcher(period, options.referenceDate);
   const productsMap = new Map(products.map((p) => [p.id, p]));
   const suppliersMap = new Map(suppliers.map((s) => [s.id, s]));
   const customersMap = new Map(customers.map((c) => [c.id, c]));
@@ -366,8 +428,21 @@ export function computeDashboardMetrics({
     .slice(0, 5);
 
   // Active sales (pending_delivery + delivered)
-  const validSales = sales.filter((s) => s.status !== 'cancelled');
-  const deliveredSales = sales.filter((s) => s.status === 'delivered');
+  const activeSales = sales.filter((s) => s.status !== 'cancelled');
+  const validSales = activeSales.filter((s) => inPeriod(s.saleDate));
+  const deliveredSales = validSales.filter((s) => s.status === 'delivered');
+  const paymentsByMethod = { yape: 0, plin: 0, cash: 0, transfer: 0, total: 0 };
+  // Cash collection follows the receipt date, including balances of older orders.
+  // Legacy receipts without a date fall back to the order date.
+  for (const sale of activeSales) {
+    for (const payment of sale.payments || []) {
+      if (!inPeriod(payment.paymentDate || sale.saleDate)) continue;
+      const method = normalizePaymentMethod(payment.method);
+      paymentsByMethod[method] = roundMoney(paymentsByMethod[method] + Math.max(0, toNumber(payment.amount, 0)));
+    }
+  }
+  paymentsByMethod.total = roundMoney(paymentsByMethod.yape + paymentsByMethod.plin + paymentsByMethod.cash + paymentsByMethod.transfer);
+  const totalUnitsSold = validSales.reduce((acc, sale) => acc + toNumber(sale.totalUnits, 0), 0);
   const pendingDeliveries = sales
     .filter((s) => s.status === 'pending_delivery')
     .map((s) => ({
@@ -416,6 +491,12 @@ export function computeDashboardMetrics({
   const supplierBreakdown = Array.from(supplierSpendMap.values()).sort((a, b) => b.totalSpent - a.totalSpent);
 
   return {
+    // Keeps period selection available to existing consumers that receive only
+    // metrics (App's current DashboardView contract), without copying raw data.
+    forPeriod: (nextPeriod) => computeDashboardMetrics(db, { ...options, period: nextPeriod }),
+    period,
+    paymentsByMethod,
+    totalUnitsSold,
     totalProducts: productRows.length,
     totalVariants: variants.length,
     totalStockUnits,

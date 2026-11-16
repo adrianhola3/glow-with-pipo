@@ -20,6 +20,7 @@ import {
   computeMargins,
   computeSaleTotals,
   formatCurrency,
+  formatSaleWhatsAppTicket,
   formatUnitCost,
   generateNextCode,
   normalizePaymentMethod,
@@ -101,6 +102,8 @@ export default function SalesView({
   const [deliveryTime, setDeliveryTime] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
   const [shippingCharged, setShippingCharged] = useState('0');
+  const [shippingCost, setShippingCost] = useState('');
+  const [ticketFeedback, setTicketFeedback] = useState(null);
   const [customFinalTotal, setCustomFinalTotal] = useState('');
   const [initialPaid, setInitialPaid] = useState('0');
   const [paymentMethod, setPaymentMethod] = useState('yape');
@@ -285,11 +288,11 @@ export default function SalesView({
       items: cartItems,
       suppliesUsed: suppliesUsedArray,
       shippingCharged: toNumber(shippingCharged, 0),
-      shippingCost: toNumber(shippingCharged, 0),
+      shippingCost: shippingCost === '' ? toNumber(shippingCharged, 0) : toNumber(shippingCost, 0),
       customTotalCharged: customFinalTotal !== '' ? customFinalTotal : null,
       payments: toNumber(initialPaid, 0) > 0 ? [{ amount: toNumber(initialPaid, 0) }] : []
     });
-  }, [cartItems, suppliesUsedArray, shippingCharged, customFinalTotal, initialPaid]);
+  }, [cartItems, suppliesUsedArray, shippingCharged, shippingCost, customFinalTotal, initialPaid]);
 
   async function handleSubmitSale(e) {
     e.preventDefault();
@@ -312,7 +315,7 @@ export default function SalesView({
       deliveryTime,
       deliveryLocation,
       shippingCharged: toNumber(shippingCharged, 0),
-      shippingCost: toNumber(shippingCharged, 0),
+      shippingCost: shippingCost === '' ? toNumber(shippingCharged, 0) : toNumber(shippingCost, 0),
       customTotalCharged: customFinalTotal !== '' ? toNumber(customFinalTotal, liveTotals.totalCharged) : null,
       initialPaymentAmount: toNumber(initialPaid, 0),
       initialPaymentMethod: paymentMethod,
@@ -335,6 +338,7 @@ export default function SalesView({
     setDeliveryTime('');
     setDeliveryLocation('');
     setShippingCharged('0');
+    setShippingCost('');
     setCustomFinalTotal('');
     setInitialPaid('0');
     setSaleNotes('');
@@ -984,7 +988,7 @@ export default function SalesView({
 
               <div className="form-grid" style={{ marginBottom: 12 }}>
                 <div className="field">
-                  <label>Costo de envío (adelantado S/)</label>
+                  <label>Envío cobrado a la clienta (S/)</label>
                   <input
                     type="number"
                     min="0"
@@ -992,6 +996,23 @@ export default function SalesView({
                     value={shippingCharged}
                     onChange={(e) => setShippingCharged(e.target.value)}
                   />
+                </div>
+
+                <div className="field">
+                  <label htmlFor="sale-shipping-cost">Costo real del envío (S/, opcional)</label>
+                  <input
+                    id="sale-shipping-cost"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={shippingCost}
+                    placeholder={String(toNumber(shippingCharged, 0))}
+                    aria-describedby="sale-shipping-cost-help"
+                    onChange={(e) => setShippingCost(e.target.value)}
+                  />
+                  <small id="sale-shipping-cost-help">
+                    Lo que pagas al courier. Si queda vacío, se usa el envío cobrado. Puedes indicar 0.
+                  </small>
                 </div>
 
                 <div className="field">
@@ -1083,6 +1104,12 @@ export default function SalesView({
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Envío:</span>
                     <span>{formatCurrency(liveTotals.shippingCharged)}</span>
+                  </div>
+                )}
+                {(liveTotals.shippingCharged > 0 || liveTotals.shippingCost > 0) && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Costo real del envío:</span>
+                    <span>-{formatCurrency(liveTotals.shippingCost)}</span>
                   </div>
                 )}
                 {Math.abs(liveTotals.roundingAdjustment) > 0.009 && (
@@ -1390,7 +1417,27 @@ export default function SalesView({
                     </div>
 
                     {/* Order Actions */}
+                    {ticketFeedback?.saleId === sale.id && (
+                      <p role="status" style={{ margin: '10px 0 0', color: ticketFeedback.error ? 'var(--status-err-fg)' : 'var(--status-ok-fg)' }}>
+                        {ticketFeedback.error ? 'No se pudo copiar el ticket. Revisa el permiso del portapapeles e inténtalo otra vez.' : '¡Ticket copiado!'}
+                      </p>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={async () => {
+                          setTicketFeedback(null);
+                          try {
+                            await navigator.clipboard.writeText(formatSaleWhatsAppTicket(sale, cust));
+                            setTicketFeedback({ saleId: sale.id, error: false });
+                          } catch {
+                            setTicketFeedback({ saleId: sale.id, error: true });
+                          }
+                        }}
+                      >
+                        📋 Copiar Ticket WhatsApp
+                      </button>
                       {wa && (
                         <a
                           href={`https://wa.me/${wa}`}

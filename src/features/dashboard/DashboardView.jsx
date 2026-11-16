@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -20,12 +20,17 @@ function cleanPhone(phone) {
 }
 
 export default function DashboardView({
-  metrics,
+  metrics: initialMetrics,
   onNavigate,
   onRequestNotificationPermission,
   notifPermission
 }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const [period, setPeriod] = useState('all');
+  const metrics = useMemo(() => initialMetrics.forPeriod(period), [initialMetrics, period]);
+  const periodLabels = { all: 'Todo el historial', month: 'Este mes', '7d': 'Últimos 7 días', today: 'Hoy' };
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
 
   return (
     <div>
@@ -162,6 +167,25 @@ export default function DashboardView({
       </div>
 
       {/* Main KPI Grid */}
+      <section aria-label="Periodo de ventas" style={{ margin: '18px 0 12px' }}>
+        <div role="group" aria-label="Filtrar ventas por periodo" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {Object.entries(periodLabels).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`tab-chip ${period === value ? 'active' : ''}`}
+              aria-pressed={period === value}
+              onClick={() => setPeriod(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="page-subtitle" style={{ margin: '8px 0 0' }}>
+          Ventas según fecha del pedido · {metrics.totalUnitsSold} unidades vendidas.
+          {' '}Stock, inversión y recordatorios muestran el estado general.
+        </p>
+      </section>
       <div className="kpi-grid">
         <div className="kpi-card highlight">
           <span className="kpi-label">Ganancia Neta de Ventas</span>
@@ -175,7 +199,7 @@ export default function DashboardView({
           <span className="kpi-label">Ingresos por Productos</span>
           <span className="kpi-value">{formatCurrency(metrics.realizedRevenue)}</span>
           <span className="kpi-foot">
-            Por cobrar en entregas: <strong>{formatCurrency(metrics.totalReceivables)}</strong>
+            Por cobrar de estos pedidos: <strong>{formatCurrency(metrics.totalReceivables)}</strong>
           </span>
         </div>
 
@@ -195,6 +219,27 @@ export default function DashboardView({
           </span>
         </div>
       </div>
+
+      <section className="card" aria-labelledby="payment-reconciliation-title" style={{ marginBottom: 18 }}>
+        <h3 className="card-title" id="payment-reconciliation-title">
+          <Wallet size={18} /> Cuadre por Cuenta / Método de Pago
+        </h3>
+        <p className="page-subtitle" style={{ marginBottom: 12 }}>
+          {periodLabels[period]} · Abonos según fecha de pago, incluidos saldos de pedidos anteriores.
+          {' '}Los abonos sin fecha usan la fecha del pedido. Se excluyen pedidos cancelados.
+        </p>
+        <div className="table-wrap">
+          <table className="pipo-table">
+            <thead><tr><th scope="col">Método</th><th scope="col">Recaudado</th></tr></thead>
+            <tbody>
+              {[['yape', 'Yape'], ['plin', 'Plin'], ['cash', 'Efectivo'], ['transfer', 'Transferencia']].map(([method, label]) => (
+                <tr key={method}><th scope="row">{label}</th><td>{formatCurrency(metrics.paymentsByMethod[method])}</td></tr>
+              ))}
+            </tbody>
+            <tfoot><tr><th scope="row">Total recaudado</th><td><strong>{formatCurrency(metrics.paymentsByMethod.total)}</strong></td></tr></tfoot>
+          </table>
+        </div>
+      </section>
 
       {/* Traffic Light Summary + Stock Alerts */}
       <div className="grid-2" style={{ marginBottom: 18 }}>
