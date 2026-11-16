@@ -1672,6 +1672,17 @@ export function updateLocalOwnerAccount(db, accountId, { name, email, pin }) {
   return next;
 }
 
+let lastCloudFetchCompletedAt = 0;
+
+export function markCloudFetchCompleted(now = Date.now()) {
+  lastCloudFetchCompletedAt = now;
+}
+
+export function shouldSuppressRealtimeEcho(now = Date.now(), cooldownMs = 2500) {
+  if (!lastCloudFetchCompletedAt) return false;
+  return now - lastCloudFetchCompletedAt < cooldownMs;
+}
+
 export async function subscribeSupabaseRealtime(onDatabaseChanged, onStatusChange) {
   const client = getSupabaseClient();
   if (!client) return () => {};
@@ -1683,8 +1694,10 @@ export async function subscribeSupabaseRealtime(onDatabaseChanged, onStatusChang
 
   let debounceTimer = null;
   const triggerSync = () => {
+    if (shouldSuppressRealtimeEcho()) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
+      if (shouldSuppressRealtimeEcho()) return;
       onDatabaseChanged();
     }, 180);
   };
@@ -1750,7 +1763,7 @@ async function executeFetchQueries(client) {
     client.from('delivery_points').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
     client.from('delivery_slots').select('*').order('slot_date', { ascending: true }).order('created_at', { ascending: true }),
     client.from('yape_gateway_status').select('*').eq('id', 'primary').maybeSingle(),
-    client.from('yape_incoming_payments').select('*').order('received_at', { ascending: false }).limit(50)
+    client.from('yape_incoming_payments').select('id, sender_full_name, normalized_sender_name, amount, operation_code, received_at, consumed, matched_sale_id').order('received_at', { ascending: false }).limit(20)
   ]);
 
   const firstErr = [
@@ -1773,6 +1786,7 @@ async function executeFetchQueries(client) {
     throw firstErr;
   }
 
+  markCloudFetchCompleted();
   return {
     categoriesRes,
     suppliersRes,

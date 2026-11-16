@@ -43,11 +43,13 @@ import {
   computeCompressedDimensions,
   confirmWebOrderManual,
   listAutoSnapshots,
+  markCloudFetchCompleted,
   normalizeWebOrderPayload,
   normalizeWebOrderResult,
   restoreAutoSnapshot,
   saveLocalDb,
   setSupabaseClientForTests,
+  shouldSuppressRealtimeEcho,
   STOREFRONT_MEDIA_BUCKET,
   uploadStorefrontMedia
 } from '../src/adapters/storageRepository.js';
@@ -1155,6 +1157,13 @@ test('computeDashboardMetrics supports period filtering (all/month/7d/today), pa
   assert.match(ticket, /Adelanto pagado: S\/ 15\.00/);
   assert.match(ticket, /Saldo pendiente: S\/ 45\.00/);
   assert.match(ticket, /UNAC Puerta Principal/);
+});
+
+test('shouldSuppressRealtimeEcho prevents duplicate full-DB pulls within cooldown after a local cloud fetch', () => {
+  markCloudFetchCompleted(10000);
+  assert.equal(shouldSuppressRealtimeEcho(10180, 2500), true);
+  assert.equal(shouldSuppressRealtimeEcho(12499, 2500), true);
+  assert.equal(shouldSuppressRealtimeEcho(12500, 2500), false);
 });
 
 
