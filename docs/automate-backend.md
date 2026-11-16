@@ -76,6 +76,8 @@ decimales; coma o punto decimal. El parser rechaza estructuras desconocidas,
 resúmenes y promociones. Puede ignorar notificaciones legítimas: recopilar
 ejemplos anonimizados y revisarlos antes de ampliar la gramática.
 Un código de seguridad de tres dígitos jamás identifica ni autentica un pago.
+El sufijo abreviado `cód.` admite tres dígitos; el sufijo completo `Código de
+seguridad` admite de tres a ocho. Ambos son texto de evidencia, nunca identidad.
 
 ## Persistencia y concurrencia
 
@@ -155,6 +157,18 @@ seguridad es: 917` aceptado como evidencia; variantes explícitas de sufijo,
 timestamp en segundos y futuro rechazados, epoch ms de 2020 marcado delayed,
 nombres enmascarados y sufijos arbitrarios ignorados. Repetida idempotencia de 16
 requests con mock y checks de sintaxis Node; todo aprobado, sin fallos ocultos.
+
+Revisión independiente de C ejecutada sin copiar sus tests, mediante
+`YAPE_NOTIFICATION_CORE` absoluto y `node --test` sobre su worktree: primera
+ejecución 6/7, fallo real porque el sufijo completo con seis dígitos había quedado
+restringido a tres. Se separaron las gramáticas de sufijo abreviado y completo;
+repetición aprobada **7/7**. No se modificaron los tests de C. Commits fuente de
+los tests: `70aab664` y `0f431365448248485af9f34db10d353b6f0d8899`.
+
+El coordinador informa, adicionalmente, `deno check index.ts` aprobado y migración
+aplicada dos veces en PGlite local, con SELECT/INSERT denegados a anon/authenticated
+y replay sin segunda fila para servicio. Es evidencia comunicada por el
+coordinador, no ejecución de B. Edge desplegado/PostgREST real siguen pendientes.
 
 No se instaló ninguna dependencia para este encargo. Sin Deno/Supabase/Docker
 disponibles: quedan pendientes `deno check`, ejecución Edge, aplicación/reaplicación

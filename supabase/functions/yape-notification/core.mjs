@@ -50,7 +50,7 @@ export function parseNotificationPayload(payload, { nowMs = Date.now() } = {}) {
   }
   // Whole-body grammar, one ungrouped amount. Unknown suffixes, thousands,
   // summaries and shortened names are deliberately sent to manual handling.
-  const match = body.match(/^(?:¡?Yape!\s*)?([\p{L}][\p{L} .'’\-]{2,119}?)\s+te\s+(?:envi[oó]|yape[oó])\s+(?:(?:un pago|un yape)\s+)?(?:por\s+)?S\/\.?\s*(\d{1,8}(?:[.,]\d{1,2})?)(?:\s*(?:[.!]|soles))?(?:\s+(?:(?:El\s+)?(?:c[oó]digo|c[oó]d\.)(?:\s+de\s+seguridad)?(?:\s+es)?\s*[:#]?\s*\d{3}|operaci[oó]n\s*[:#]?\s*\d{3,20})[.!]?)?$/iu);
+  const match = body.match(/^(?:¡?Yape!\s*)?([\p{L}][\p{L} .'’\-]{2,119}?)\s+te\s+(?:envi[oó]|yape[oó])\s+(?:(?:un pago|un yape)\s+)?(?:por\s+)?S\/\.?\s*(\d{1,8}(?:[.,]\d{1,2})?)(?:\s*(?:[.!]|soles))?(?:\s+(?:(?:El\s+)?c[oó]d\.(?:\s+de\s+seguridad)?(?:\s+es)?\s*[:#]?\s*\d{3}|(?:El\s+)?c[oó]digo(?:\s+de\s+seguridad)?(?:\s+es)?\s*[:#]?\s*\d{3,8}|operaci[oó]n\s*[:#]?\s*\d{3,20})[.!]?)?$/iu);
   if (!match) return ignore('ambiguous_payment_text');
   const senderName = match[1].trim().replace(/\s+/gu, ' ');
   if (senderName.split(' ').length < 2) return ignore('ambiguous_sender');
