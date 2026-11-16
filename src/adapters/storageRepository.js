@@ -169,30 +169,98 @@ export function loadLocalDb() {
   }
 }
 
+function stripInlineBase64Url(url) {
+  if (typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(trimmed)) {
+    return '';
+  }
+  return url;
+}
+
+export function stripBase64ImagesFromDb(db) {
+  if (!db || typeof db !== 'object') return db;
+  return {
+    ...db,
+    products: Array.isArray(db.products)
+      ? db.products.map((p) => ({
+          ...p,
+          imageUrl: stripInlineBase64Url(p.imageUrl),
+          shadesImageUrl: stripInlineBase64Url(p.shadesImageUrl),
+          galleryUrls: Array.isArray(p.galleryUrls)
+            ? p.galleryUrls.map(stripInlineBase64Url).filter(Boolean)
+            : p.galleryUrls
+        }))
+      : db.products,
+    variants: Array.isArray(db.variants)
+      ? db.variants.map((v) => ({
+          ...v,
+          imageUrl: stripInlineBase64Url(v.imageUrl)
+        }))
+      : db.variants,
+    combos: Array.isArray(db.combos)
+      ? db.combos.map((c) => ({
+          ...c,
+          imageUrl: stripInlineBase64Url(c.imageUrl)
+        }))
+      : db.combos
+  };
+}
+
+function getSortedAutoSnapshotKeys() {
+  const keys = [];
+  if (!hasBrowserStorage()) return keys;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(AUTO_SNAPSHOT_PREFIX)) {
+      keys.push(k);
+    }
+  }
+  keys.sort();
+  return keys;
+}
+
 export function saveLocalDb(db) {
   if (hasBrowserStorage()) {
+    const compactDb = stripBase64ImagesFromDb(db);
+    const compactJson = JSON.stringify(compactDb);
+    const fullJson = JSON.stringify(db);
+
     try {
-      localStorage.setItem(LOCAL_DB_KEY, JSON.stringify(db));
-      // Auto-snapshot rotativo (últimos 5 estados sanos) con secuencia monótona
+      localStorage.setItem(LOCAL_DB_KEY, fullJson);
+    } catch {
+      // Si se excede la cuota de localStorage, podar snapshots antiguos e intentar nuevamente
+      try {
+        const existingSnapshots = getSortedAutoSnapshotKeys();
+        while (existingSnapshots.length > 0) {
+          const oldest = existingSnapshots.shift();
+          localStorage.removeItem(oldest);
+        }
+        try {
+          localStorage.setItem(LOCAL_DB_KEY, fullJson);
+        } catch {
+          // Último recurso: guardar estado compacto sin cadenas Base64 inline para no perder ventas ni stock
+          localStorage.setItem(LOCAL_DB_KEY, compactJson);
+        }
+      } catch {
+        // Ignorar si el almacenamiento está completamente bloqueado
+      }
+    }
+
+    try {
+      // Auto-snapshot rotativo (últimos 5 estados sanos) sin imágenes Base64 inline pesadas
       const now = Date.now();
       const seq = String(++autoSnapshotSequence).padStart(8, '0');
       const snapshotKey = `${AUTO_SNAPSHOT_PREFIX}${now}_${seq}`;
-      localStorage.setItem(snapshotKey, JSON.stringify(db));
+      localStorage.setItem(snapshotKey, compactJson);
 
-      const keys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith(AUTO_SNAPSHOT_PREFIX)) {
-          keys.push(k);
-        }
-      }
-      keys.sort();
+      const keys = getSortedAutoSnapshotKeys();
       while (keys.length > MAX_AUTO_SNAPSHOTS) {
         const oldest = keys.shift();
         localStorage.removeItem(oldest);
       }
     } catch {
-      // Ignorar errores de cuota de storage de forma segura
+      // Si el snapshot rotativo excede la cuota disponible, omitirlo sin afectar LOCAL_DB_KEY
     }
   }
   return db;
