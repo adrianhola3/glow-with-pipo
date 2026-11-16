@@ -1104,8 +1104,8 @@ export default function StorefrontView({
             <label className="pipo-discovery-select">
               <span>Categoría</span>
               <select aria-label="Categoría" value={activeCategory} onChange={(e) => { revealResults(); setActiveCategory(e.target.value); }}>
-                <option value="ALL">Todas las categorías</option>
-                <option value="COMBOS">Combos especiales</option>
+                <option value="ALL">Todas</option>
+                <option value="COMBOS">Combos</option>
                 {availableCategories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
               </select>
             </label>
@@ -1113,8 +1113,8 @@ export default function StorefrontView({
               <span>Ordenar por</span>
               <select aria-label="Ordenar por" value={catalogOrder} onChange={(e) => { revealResults(); setCatalogOrder(e.target.value); }}>
                 <option value="recommended">Recomendados</option>
-                <option value="price-asc">Precio: menor a mayor</option>
-                <option value="price-desc">Precio: mayor a menor</option>
+                <option value="price-asc">Menor precio</option>
+                <option value="price-desc">Mayor precio</option>
                 <option value="name">Nombre: A–Z</option>
               </select>
             </label>
