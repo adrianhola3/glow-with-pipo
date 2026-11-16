@@ -7,6 +7,7 @@ import {
   recordUserActivity,
   getLastUserActivity,
   isSessionExpired,
+  isSessionExpiredByInactivity,
   getSavedSession,
   signOutApp,
   isAuthPermissionError,
@@ -59,9 +60,18 @@ test('Session Inactivity Timeout: configuración, rastreo de actividad y expirac
     assert.equal(getLastUserActivity(), now - 5 * 60 * 1000);
     assert.equal(isSessionExpired(now), false, 'Sesión no debe expirar con 5 min de inactividad si el límite es 30 min');
 
-    // Actividad en el límite exacto (hace 29 minutos)
+    // Actividad en el minuto 29 (antes del límite)
     recordUserActivity(now - 29 * 60 * 1000);
     assert.equal(isSessionExpired(now), false, 'Sesión no debe expirar a los 29 min');
+
+    // Actividad en el límite exacto (now - lastActivityAt === timeoutMs = 30 min)
+    recordUserActivity(now - 30 * 60 * 1000);
+    assert.equal(isSessionExpired(now), true, 'Sesión DEBE expirar exactamente al cumplirse los 30 min (now - last === timeoutMs)');
+    assert.equal(
+      isSessionExpiredByInactivity(now),
+      true,
+      'isSessionExpiredByInactivity DEBE expirar en el borde exacto de inactividad'
+    );
 
     // Actividad superada (hace 31 minutos)
     recordUserActivity(now - 31 * 60 * 1000);

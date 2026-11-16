@@ -111,8 +111,14 @@ export function saveSupabaseConfig(url, anonKey) {
 
 let cachedSupabase = null;
 let cachedCfgSignature = '';
+let testSupabaseOverride = null;
+
+export function setSupabaseClientForTests(mockClient = null) {
+  testSupabaseOverride = mockClient;
+}
 
 export function getSupabaseClient() {
+  if (testSupabaseOverride) return testSupabaseOverride;
   const cfg = getSupabaseConfig();
   if (!cfg) return null;
   const sig = `${cfg.url}|${cfg.anonKey}`;
@@ -726,6 +732,28 @@ export function applyCreateOrUpdateCustomer(db, payload) {
   return { db: next, customer };
 }
 
+function adjustLocalDeliverySlotBooking(next, slotId, delta) {
+  if (!slotId || !delta) return;
+  if (Array.isArray(next.deliverySlots)) {
+    for (const slot of next.deliverySlots) {
+      if (slot && slot.id === slotId) {
+        slot.bookedOrders = Math.max(0, Math.trunc(toNumber(slot.bookedOrders, 0)) + delta);
+      }
+    }
+  }
+  if (Array.isArray(next.deliveryPoints)) {
+    for (const point of next.deliveryPoints) {
+      if (Array.isArray(point?.slots)) {
+        for (const slot of point.slots) {
+          if (slot && slot.id === slotId) {
+            slot.bookedOrders = Math.max(0, Math.trunc(toNumber(slot.bookedOrders, 0)) + delta);
+          }
+        }
+      }
+    }
+  }
+}
+
 export function applyDeleteCustomer(db, customerId, options = {}) {
   const next = structuredClone(db);
   const custSales = next.sales.filter((s) => s.customerId === customerId);
@@ -740,6 +768,9 @@ export function applyDeleteCustomer(db, customerId, options = {}) {
           for (const sup of sale.suppliesUsed || []) {
             const sIdx = next.supplies.findIndex((s) => s.id === sup.supplyId);
             if (sIdx >= 0) next.supplies[sIdx].stock += sup.quantity;
+          }
+          if (sale.deliverySlotId) {
+            adjustLocalDeliverySlotBooking(next, sale.deliverySlotId, -1);
           }
         }
       }
@@ -766,6 +797,9 @@ export function applyDeleteSale(db, saleId) {
     for (const sup of sale.suppliesUsed || []) {
       const sIdx = next.supplies.findIndex((s) => s.id === sup.supplyId);
       if (sIdx >= 0) next.supplies[sIdx].stock += sup.quantity;
+    }
+    if (sale.deliverySlotId) {
+      adjustLocalDeliverySlotBooking(next, sale.deliverySlotId, -1);
     }
   }
   next.sales.splice(idx, 1);
@@ -1000,6 +1034,9 @@ export function applyUpdateSaleStatus(db, saleId, nextStatus) {
         next.supplies[sIdx].stock += sup.quantity;
       }
     }
+    if (sale.deliverySlotId) {
+      adjustLocalDeliverySlotBooking(next, sale.deliverySlotId, -1);
+    }
   }
 
   if (prevStatus === 'cancelled' && nextStatus !== 'cancelled') {
@@ -1021,9 +1058,66 @@ export function applyUpdateSaleStatus(db, saleId, nextStatus) {
         next.supplies[sIdx].stock -= sup.quantity;
       }
     }
+    if (sale.deliverySlotId) {
+      adjustLocalDeliverySlotBooking(next, sale.deliverySlotId, 1);
+    }
   }
 
   sale.status = nextStatus;
+  return next;
+}
+
+export function applyConfirmWebOrderManual(db, payloadOrSaleId) {
+  const next = structuredClone(db);
+  const saleId =
+    typeof payloadOrSaleId === 'string'
+      ? payloadOrSaleId
+      : payloadOrSaleId?.saleId || payloadOrSaleId?.id || '';
+  if (!saleId) return next;
+
+  const idx = (next.sales || []).findIndex((s) => s.id === saleId);
+  if (idx < 0) return next;
+
+  const sale = next.sales[idx];
+  if (sale.status === 'cancelled') return next;
+
+  sale.payments = Array.isArray(sale.payments) ? sale.payments : [];
+  const totalAmount = roundMoney(toNumber(sale.totalCharged ?? sale.totalAmount, 0));
+  const recordedPaid = roundMoney(
+    sale.payments.reduce((acc, p) => acc + toNumber(p.amount, 0), 0)
+  );
+  const currentPaid =
+    sale.payments.length > 0
+      ? recordedPaid
+      : roundMoney(toNumber(sale.amountPaid ?? sale.paidAmount, 0));
+  const missingAmount = roundMoney(Math.max(0, totalAmount - currentPaid));
+
+  if (missingAmount > 0) {
+    const note =
+      typeof payloadOrSaleId === 'object' && payloadOrSaleId?.note
+        ? String(payloadOrSaleId.note).trim()
+        : 'Pago Yape confirmado manualmente (1 clic)';
+    const method =
+      typeof payloadOrSaleId === 'object' && payloadOrSaleId?.method
+        ? normalizePaymentMethod(payloadOrSaleId.method)
+        : 'yape';
+    sale.payments.push({
+      id: uid(),
+      paymentDate: new Date().toISOString(),
+      amount: missingAmount,
+      method,
+      paymentConcept: 'full_payment',
+      note
+    });
+  }
+
+  sale.paymentVerificationStatus = 'verified_manual';
+  sale.totalCharged = totalAmount;
+  sale.totalAmount = totalAmount;
+  sale.amountPaid = totalAmount;
+  sale.paidAmount = totalAmount;
+  sale.balanceDue = 0;
+
   return next;
 }
 
@@ -1201,7 +1295,18 @@ export function isSessionExpired(now = Date.now()) {
   const last = getLastUserActivity();
   if (!last) return false;
   const timeoutMs = getSessionTimeoutMinutes() * 60 * 1000;
-  return now - last > timeoutMs;
+  return now - last >= timeoutMs;
+}
+
+export function isSessionExpiredByInactivity(arg1 = Date.now(), arg2, arg3) {
+  if (arg2 !== undefined) {
+    const last = Number(arg1 || 0);
+    if (!last) return false;
+    const now = Number(arg2);
+    const timeoutMs = arg3 !== undefined ? Number(arg3) : getSessionTimeoutMinutes() * 60 * 1000;
+    return now - last >= timeoutMs;
+  }
+  return isSessionExpired(arg1);
 }
 
 export function getSavedSession() {
@@ -2458,19 +2563,65 @@ export async function cloudSaveCustomer(currentDb, payload) {
   return fetchSupabaseDatabase();
 }
 
+async function adjustCloudDeliverySlotBooking(client, slotId, delta) {
+  if (!client || !slotId || !delta) return;
+  const { data: slotRow } = await client
+    .from('delivery_slots')
+    .select('booked_orders')
+    .eq('id', slotId)
+    .single();
+  if (slotRow) {
+    const nextBooked = Math.max(0, Math.trunc(toNumber(slotRow.booked_orders, 0)) + delta);
+    await client
+      .from('delivery_slots')
+      .update({ booked_orders: nextBooked })
+      .eq('id', slotId);
+  }
+}
+
 export async function cloudDeleteCustomer(customerId, options = {}) {
   const client = getSupabaseClient();
   if (options.cascadeSales) {
-    const { data: sales } = await client.from('sales').select('id, status').eq('customer_id', customerId);
+    const { data: sales } = await client
+      .from('sales')
+      .select('id, status, delivery_slot_id')
+      .eq('customer_id', customerId);
     for (const s of sales || []) {
       if (s.status !== 'cancelled') {
-        const { data: saleItems } = await client.from('sale_items').select('variant_id, quantity').eq('sale_id', s.id);
-        for (const item of saleItems || []) {
+        const [saleItemsRes, saleSupsRes] = await Promise.all([
+          client.from('sale_items').select('variant_id, quantity').eq('sale_id', s.id),
+          client.from('sale_supplies').select('supply_id, quantity').eq('sale_id', s.id)
+        ]);
+        for (const item of saleItemsRes?.data || []) {
           if (!item.variant_id) continue;
-          const { data: v } = await client.from('product_variants').select('stock').eq('id', item.variant_id).single();
+          const { data: v } = await client
+            .from('product_variants')
+            .select('stock')
+            .eq('id', item.variant_id)
+            .single();
           if (v) {
-            await client.from('product_variants').update({ stock: v.stock + item.quantity }).eq('id', item.variant_id);
+            await client
+              .from('product_variants')
+              .update({ stock: v.stock + item.quantity })
+              .eq('id', item.variant_id);
           }
+        }
+        for (const sup of saleSupsRes?.data || []) {
+          if (!sup.supply_id) continue;
+          const { data: supRow } = await client
+            .from('supplies')
+            .select('stock')
+            .eq('id', sup.supply_id)
+            .single();
+          if (supRow) {
+            await client
+              .from('supplies')
+              .update({ stock: supRow.stock + sup.quantity })
+              .eq('id', sup.supply_id);
+          }
+        }
+        if (s.delivery_slot_id) {
+          await adjustCloudDeliverySlotBooking(client, s.delivery_slot_id, -1);
         }
       }
       await client.from('sales').delete().eq('id', s.id);
@@ -2489,19 +2640,19 @@ export async function cloudDeleteCustomer(customerId, options = {}) {
 
 export async function cloudDeleteSale(saleId) {
   const client = getSupabaseClient();
-  const { data: saleRow, error: sErr } = await client
+  const { data: saleRow } = await client
     .from('sales')
-    .select('id, status')
+    .select('id, status, delivery_slot_id')
     .eq('id', saleId)
     .single();
 
   if (saleRow && saleRow.status !== 'cancelled') {
-    const { data: saleItems } = await client
-      .from('sale_items')
-      .select('variant_id, quantity')
-      .eq('sale_id', saleId);
+    const [saleItemsRes, saleSupsRes] = await Promise.all([
+      client.from('sale_items').select('variant_id, quantity').eq('sale_id', saleId),
+      client.from('sale_supplies').select('supply_id, quantity').eq('sale_id', saleId)
+    ]);
 
-    for (const item of saleItems || []) {
+    for (const item of saleItemsRes?.data || []) {
       if (!item.variant_id) continue;
       const { data: v } = await client
         .from('product_variants')
@@ -2514,6 +2665,25 @@ export async function cloudDeleteSale(saleId) {
           .update({ stock: v.stock + item.quantity })
           .eq('id', item.variant_id);
       }
+    }
+
+    for (const sup of saleSupsRes?.data || []) {
+      if (!sup.supply_id) continue;
+      const { data: supRow } = await client
+        .from('supplies')
+        .select('stock')
+        .eq('id', sup.supply_id)
+        .single();
+      if (supRow) {
+        await client
+          .from('supplies')
+          .update({ stock: supRow.stock + sup.quantity })
+          .eq('id', sup.supply_id);
+      }
+    }
+
+    if (saleRow.delivery_slot_id) {
+      await adjustCloudDeliverySlotBooking(client, saleRow.delivery_slot_id, -1);
     }
   }
 
@@ -2898,6 +3068,9 @@ export async function cloudUpdateSaleStatus(saleId, nextStatus) {
           .eq('id', sup.supply_id);
       }
     }
+    if (saleRow.delivery_slot_id) {
+      await adjustCloudDeliverySlotBooking(client, saleRow.delivery_slot_id, -1);
+    }
   }
 
   // Re-deduct stock if reactivating a cancelled order
@@ -2935,6 +3108,9 @@ export async function cloudUpdateSaleStatus(saleId, nextStatus) {
           .update({ stock: s.stock - sup.quantity })
           .eq('id', sup.supply_id);
       }
+    }
+    if (saleRow.delivery_slot_id) {
+      await adjustCloudDeliverySlotBooking(client, saleRow.delivery_slot_id, 1);
     }
   }
 
@@ -3323,6 +3499,30 @@ export async function cloudSimulateOrRegisterYapePayment({
   const freshDb = await fetchSupabaseDatabase();
   return { db: freshDb, matchResult: data };
 }
+
+export async function confirmWebOrderManual(saleId) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no disponible.');
+  const cleanSaleId =
+    typeof saleId === 'object' ? saleId?.saleId || saleId?.id || '' : String(saleId || '').trim();
+  if (!cleanSaleId) throw new Error('ID de pedido inválido para confirmación manual.');
+
+  const { data, error } = await client.rpc('confirm_web_order_payment_manual', {
+    target_sale_id: cleanSaleId
+  });
+  if (error) {
+    throw new Error(`Error al confirmar pago del pedido web: ${error.message}`);
+  }
+  const freshDb = await fetchSupabaseDatabase();
+  const normalized = normalizeWebOrderResult(data);
+  return {
+    ...(normalized && typeof normalized === 'object' ? normalized : {}),
+    db: freshDb,
+    confirmationResult: normalized
+  };
+}
+
+export const cloudConfirmWebOrderManual = confirmWebOrderManual;
 
 // ============================================================================
 // 10. Public Storefront Customer RPCs (Zero-Login Anonymous Access)

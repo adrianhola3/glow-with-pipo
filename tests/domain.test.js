@@ -12,6 +12,7 @@ import {
 import {
   applyAddCategory,
   applyAddSalePayment,
+  applyConfirmWebOrderManual,
   applyCreateOrUpdateCombo,
   applyCreateOrUpdateCustomer,
   applyCreateOrUpdateSupplier,
@@ -22,6 +23,7 @@ import {
   applyDeleteCombo,
   applyDeleteCustomer,
   applyDeleteProduct,
+  applyDeleteSale,
   applyDeleteSupplier,
   applyDeleteSupply,
   applyRecordRestock,
@@ -33,11 +35,16 @@ import {
   applyUpdateProduct,
   applyUpdateSalePrice,
   applyUpdateSaleStatus,
+  cloudDeleteCustomer,
+  cloudDeleteSale,
+  cloudUpdateSaleStatus,
+  confirmWebOrderManual,
   listAutoSnapshots,
   normalizeWebOrderPayload,
   normalizeWebOrderResult,
   restoreAutoSnapshot,
-  saveLocalDb
+  saveLocalDb,
+  setSupabaseClientForTests
 } from '../src/adapters/storageRepository.js';
 
 function emptyState() {
@@ -701,6 +708,288 @@ test('Web storefront order payload & result normalization handles buyerName/cust
   });
   assert.equal(paidRes.code, 'VTA-005');
   assert.equal(paidRes.verified, true);
+});
+
+test('applyConfirmWebOrderManual confirms pending_delivery web orders of any age (>20 min) and records missing payment', () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Lip Oil Coquette',
+    brand: 'Glow Pipo',
+    category: 'Labios',
+    unitPrice: 18,
+    unitCost: 8,
+    initialStock: 10
+  });
+  const variantId = db.variants[0].id;
+
+  db = applyCreateSale(db, {
+    newCustomer: {
+      name: 'Valeria Paredes',
+      whatsapp: '987111222',
+      socialPlatform: 'web'
+    },
+    status: 'pending_delivery',
+    shippingCharged: 5,
+    shippingCost: 5,
+    items: [{ variantId, quantity: 2, appliedUnitPrice: 18, pricingMode: 'unit' }]
+  });
+
+  // Simulate an order created 3 hours ago (>20 min auto-match window) with partial advance of S/ 5
+  const sale = db.sales[0];
+  sale.createdAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  sale.orderSource = 'web';
+  sale.paymentVerificationStatus = 'pending_verification';
+  sale.payments = [
+    {
+      id: 'pay-adv-1',
+      paymentDate: sale.createdAt,
+      amount: 5,
+      method: 'yape',
+      paymentConcept: 'shipping_advance',
+      note: 'Adelanto previo'
+    }
+  ];
+  sale.amountPaid = 5;
+  sale.balanceDue = 36; // totalCharged = 41 (36 products + 5 shipping)
+
+  db = applyConfirmWebOrderManual(db, { saleId: sale.id });
+  const confirmed = db.sales[0];
+
+  assert.equal(confirmed.paymentVerificationStatus, 'verified_manual');
+  assert.equal(confirmed.amountPaid, 41);
+  assert.equal(confirmed.paidAmount, 41);
+  assert.equal(confirmed.totalAmount, 41);
+  assert.equal(confirmed.balanceDue, 0);
+  assert.equal(confirmed.payments.length, 2, 'Debe anexar el pago faltante de S/ 36');
+  assert.equal(confirmed.payments[1].amount, 36);
+  assert.equal(confirmed.payments[1].method, 'yape');
+
+  // Calling applyConfirmWebOrderManual again is idempotent (no duplicate payment added)
+  db = applyConfirmWebOrderManual(db, { saleId: sale.id });
+  assert.equal(db.sales[0].payments.length, 2);
+  assert.equal(db.sales[0].balanceDue, 0);
+});
+
+test('applyUpdateSaleStatus and applyDeleteSale restore supplies stock and release booked delivery slots', () => {
+  let db = emptyState();
+  db.deliveryPoints = [
+    {
+      id: 'dp-unac',
+      code: 'PTO-001',
+      name: 'UNAC Puerta 1',
+      zoneType: 'unac',
+      active: true,
+      slots: [
+        {
+          id: 'slot-1',
+          deliveryPointId: 'dp-unac',
+          dayLabel: 'Viernes',
+          timeRange: '12:00 - 14:00',
+          maxOrders: 10,
+          bookedOrders: 3,
+          active: true
+        }
+      ]
+    }
+  ];
+  db.deliverySlots = [
+    {
+      id: 'slot-1',
+      deliveryPointId: 'dp-unac',
+      dayLabel: 'Viernes',
+      timeRange: '12:00 - 14:00',
+      maxOrders: 10,
+      bookedOrders: 3,
+      active: true
+    }
+  ];
+
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Rubor Líquido',
+    brand: 'Nossa',
+    category: 'Rostro',
+    unitPrice: 14,
+    unitCost: 6,
+    initialStock: 8
+  });
+  db = applyCreateOrUpdateSupply(db, {
+    name: 'Bolsa Satinada Coquette',
+    stock: 15,
+    unitCost: 0.8
+  });
+
+  const variantId = db.variants[0].id;
+  const supplyId = db.supplies[0].id;
+
+  db = applyCreateSale(db, {
+    newCustomer: { name: 'Andrea', whatsapp: '999000111' },
+    status: 'pending_delivery',
+    items: [{ variantId, quantity: 2, appliedUnitPrice: 14 }],
+    suppliesUsed: [{ supplyId, quantity: 1 }]
+  });
+  db.sales[0].deliveryPointId = 'dp-unac';
+  db.sales[0].deliverySlotId = 'slot-1';
+
+  const saleId = db.sales[0].id;
+  assert.equal(db.variants[0].stock, 6);
+  assert.equal(db.supplies[0].stock, 14);
+
+  // 1. Cancel web order -> restores variant stock (6->8), supply stock (14->15), and decrements bookedOrders (3->2)
+  db = applyUpdateSaleStatus(db, saleId, 'cancelled');
+  assert.equal(db.variants[0].stock, 8);
+  assert.equal(db.supplies[0].stock, 15);
+  assert.equal(db.deliverySlots[0].bookedOrders, 2);
+  assert.equal(db.deliveryPoints[0].slots[0].bookedOrders, 2);
+
+  // 2. Reactivate cancelled order -> re-deducts stock and re-books slot (2->3)
+  db = applyUpdateSaleStatus(db, saleId, 'pending_delivery');
+  assert.equal(db.variants[0].stock, 6);
+  assert.equal(db.supplies[0].stock, 14);
+  assert.equal(db.deliverySlots[0].bookedOrders, 3);
+  assert.equal(db.deliveryPoints[0].slots[0].bookedOrders, 3);
+
+  // 3. Delete active order -> restores variant stock (6->8), supply stock (14->15), and decrements bookedOrders (3->2)
+  db = applyDeleteSale(db, saleId);
+  assert.equal(db.sales.length, 0);
+  assert.equal(db.variants[0].stock, 8);
+  assert.equal(db.supplies[0].stock, 15);
+  assert.equal(db.deliverySlots[0].bookedOrders, 2);
+  assert.equal(db.deliveryPoints[0].slots[0].bookedOrders, 2);
+});
+
+test('cloudUpdateSaleStatus, cloudDeleteSale, cloudDeleteCustomer and confirmWebOrderManual restore supplies, release slots, and call RPC', async () => {
+  const state = {
+    sales: [
+      { id: 'sale-1', customer_id: 'cust-1', status: 'pending_delivery', delivery_slot_id: 'slot-1' },
+      { id: 'sale-2', customer_id: 'cust-1', status: 'pending_delivery', delivery_slot_id: 'slot-1' }
+    ],
+    sale_items: [
+      { sale_id: 'sale-1', variant_id: 'var-1', quantity: 2, product_name_snapshot: 'Gloss' },
+      { sale_id: 'sale-2', variant_id: 'var-1', quantity: 1, product_name_snapshot: 'Gloss' }
+    ],
+    sale_supplies: [
+      { sale_id: 'sale-1', supply_id: 'sup-1', quantity: 1, supply_name_snapshot: 'Bolsa' },
+      { sale_id: 'sale-2', supply_id: 'sup-1', quantity: 2, supply_name_snapshot: 'Bolsa' }
+    ],
+    product_variants: [{ id: 'var-1', product_id: 'prod-1', shade_name: 'Único', stock: 5, unit_cost: 4 }],
+    supplies: [{ id: 'sup-1', code: 'INS-001', name: 'Bolsa', stock: 10, unit_cost: 0.5 }],
+    delivery_slots: [{ id: 'slot-1', delivery_point_id: 'dp-1', booked_orders: 2, max_orders: 10, active: true }],
+    customers: [{ id: 'cust-1', code: 'CLI-001', name: 'María', whatsapp: '999888777' }]
+  };
+  const rpcCalls = [];
+
+  function createQueryBuilder(table) {
+    let op = 'select';
+    let updatePayload = null;
+    const filters = [];
+    let isSingle = false;
+
+    const builder = {
+      select() {
+        return builder;
+      },
+      order() {
+        return builder;
+      },
+      limit() {
+        return builder;
+      },
+      eq(col, val) {
+        filters.push((r) => r[col] === val);
+        return builder;
+      },
+      in(col, vals) {
+        filters.push((r) => vals.includes(r[col]));
+        return builder;
+      },
+      update(payload) {
+        op = 'update';
+        updatePayload = payload;
+        return builder;
+      },
+      delete() {
+        op = 'delete';
+        return builder;
+      },
+      single() {
+        isSingle = true;
+        return builder;
+      },
+      maybeSingle() {
+        isSingle = true;
+        return builder;
+      },
+      then(resolve, reject) {
+        try {
+          const rows = state[table] || [];
+          const matched = rows.filter((r) => filters.every((f) => f(r)));
+          if (op === 'update') {
+            matched.forEach((r) => Object.assign(r, updatePayload));
+            return Promise.resolve({ data: matched, error: null }).then(resolve, reject);
+          }
+          if (op === 'delete') {
+            state[table] = rows.filter((r) => !filters.every((f) => f(r)));
+            return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+          }
+          const data = isSingle ? matched[0] || null : matched;
+          return Promise.resolve({ data, error: null }).then(resolve, reject);
+        } catch (err) {
+          return Promise.reject(err).then(resolve, reject);
+        }
+      }
+    };
+    return builder;
+  }
+
+  const mockClient = {
+    auth: {
+      getSession: async () => ({ data: { session: { user: { id: 'u1', email: 'pipo@glowwithpipo.pe' }, expires_at: Math.floor(Date.now() / 1000) + 3600 } }, error: null })
+    },
+    realtime: { setAuth() {} },
+    from(table) {
+      return createQueryBuilder(table);
+    },
+    async rpc(fnName, args) {
+      rpcCalls.push({ fnName, args });
+      return { data: { verified: true, saleId: args?.target_sale_id, verificationStatus: 'verified_manual' }, error: null };
+    }
+  };
+
+  setSupabaseClientForTests(mockClient);
+  try {
+    // 1. cloudUpdateSaleStatus -> cancelling sale-1 restores variant (+2 -> 7), supply (+1 -> 11), and releases slot (2 -> 1)
+    await cloudUpdateSaleStatus('sale-1', 'cancelled');
+    assert.equal(state.product_variants[0].stock, 7);
+    assert.equal(state.supplies[0].stock, 11);
+    assert.equal(state.delivery_slots[0].booked_orders, 1);
+
+    // Reactivate sale-1 back to pending_delivery -> deducts variant (7 -> 5), supply (11 -> 10), and re-books slot (1 -> 2)
+    await cloudUpdateSaleStatus('sale-1', 'pending_delivery');
+    assert.equal(state.product_variants[0].stock, 5);
+    assert.equal(state.supplies[0].stock, 10);
+    assert.equal(state.delivery_slots[0].booked_orders, 2);
+
+    // 2. cloudDeleteSale('sale-1') -> restores variant (5 -> 7), supply (10 -> 11), and releases slot (2 -> 1)
+    await cloudDeleteSale('sale-1');
+    assert.equal(state.product_variants[0].stock, 7);
+    assert.equal(state.supplies[0].stock, 11);
+    assert.equal(state.delivery_slots[0].booked_orders, 1);
+
+    // 3. cloudDeleteCustomer('cust-1', { cascadeSales: true }) -> deletes remaining active sale-2 and restores variant (7 -> 8), supply (11 -> 13), and releases slot (1 -> 0)
+    await cloudDeleteCustomer('cust-1', { cascadeSales: true });
+    assert.equal(state.product_variants[0].stock, 8);
+    assert.equal(state.supplies[0].stock, 13);
+    assert.equal(state.delivery_slots[0].booked_orders, 0);
+
+    // 4. confirmWebOrderManual calls RPC confirm_web_order_payment_manual
+    const manualRes = await confirmWebOrderManual('sale-manual-99');
+    assert.equal(rpcCalls.length, 1);
+    assert.equal(rpcCalls[0].fnName, 'confirm_web_order_payment_manual');
+    assert.deepEqual(rpcCalls[0].args, { target_sale_id: 'sale-manual-99' });
+    assert.ok(manualRes.db);
+  } finally {
+    setSupabaseClientForTests(null);
+  }
 });
 
 
