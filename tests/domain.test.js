@@ -7,6 +7,7 @@ import {
   computePackageUnitCost,
   computeSaleTotals,
   computeWeightedAverageCost,
+  formatSaleWhatsAppTicket,
   normalizePaymentMethod
 } from '../src/domain/calculations.js';
 import {
@@ -1063,6 +1064,97 @@ test('mediaStorage: computeCompressedDimensions, compressImageToWebP, and upload
   });
   assert.equal(fallbackResult.storage, 'inline-fallback');
   assert.equal(fallbackResult.url, sampleDataUrl);
+});
+
+test('computeDashboardMetrics supports period filtering (all/month/7d/today), paymentsByMethod reconciliation, and formatSaleWhatsAppTicket', () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Iluminador Coquette',
+    brand: 'Glow Pipo',
+    category: 'Rostro',
+    unitPrice: 20,
+    unitCost: 8,
+    initialStock: 20
+  });
+  const variantId = db.variants[0].id;
+
+  // Sale 1: October 2026 (outside November 2026 month/7d/today)
+  db = applyCreateSale(db, {
+    newCustomer: { name: 'Lucía', whatsapp: '999111000' },
+    saleDate: '2026-10-15',
+    status: 'delivered',
+    initialPaymentAmount: 20,
+    initialPaymentMethod: 'efectivo',
+    items: [{ variantId, quantity: 1, appliedUnitPrice: 20 }]
+  });
+  db.sales[0].payments[0].paymentDate = '2026-10-15T15:00:00.000Z';
+
+  // Sale 2: Nov 03, 2026 (in month, outside 7d of Nov 16)
+  db = applyCreateSale(db, {
+    newCustomer: { name: 'Mariana', whatsapp: '999222000' },
+    saleDate: '2026-11-03',
+    status: 'delivered',
+    initialPaymentAmount: 40,
+    initialPaymentMethod: 'plin',
+    items: [{ variantId, quantity: 2, appliedUnitPrice: 20 }]
+  });
+  db.sales[0].payments[0].paymentDate = '2026-11-03T15:00:00.000Z';
+
+  // Sale 3: Nov 16, 2026 (today)
+  db = applyCreateSale(db, {
+    newCustomer: { name: 'Valeria', whatsapp: '999333000' },
+    saleDate: '2026-11-16',
+    status: 'pending_delivery',
+    deliveryLocation: 'UNAC Puerta Principal',
+    deliveryDate: '2026-11-17',
+    deliveryTime: '13:00 - 14:30',
+    initialPaymentAmount: 15,
+    initialPaymentMethod: 'yape',
+    items: [{ variantId, quantity: 3, appliedUnitPrice: 20 }]
+  });
+  db.sales[0].payments[0].paymentDate = '2026-11-16T16:00:00.000Z';
+
+  const allMetrics = computeDashboardMetrics(db, { period: 'all', referenceDate: '2026-11-16' });
+  assert.equal(allMetrics.totalSalesCount, 3);
+  assert.equal(allMetrics.totalUnitsSold, 6);
+  assert.deepEqual(allMetrics.paymentsByMethod, {
+    yape: 15,
+    plin: 40,
+    cash: 20,
+    transfer: 0,
+    total: 75
+  });
+
+  const monthMetrics = allMetrics.forPeriod('month');
+  assert.equal(monthMetrics.totalSalesCount, 2);
+  assert.equal(monthMetrics.totalUnitsSold, 5);
+  assert.deepEqual(monthMetrics.paymentsByMethod, {
+    yape: 15,
+    plin: 40,
+    cash: 0,
+    transfer: 0,
+    total: 55
+  });
+
+  const todayMetrics = allMetrics.forPeriod('today');
+  assert.equal(todayMetrics.totalSalesCount, 1);
+  assert.equal(todayMetrics.totalUnitsSold, 3);
+  assert.deepEqual(todayMetrics.paymentsByMethod, {
+    yape: 15,
+    plin: 0,
+    cash: 0,
+    transfer: 0,
+    total: 15
+  });
+
+  const ticket = formatSaleWhatsAppTicket(db.sales[0], { name: 'Valeria' });
+  assert.match(ticket, /Glow with Pipo/);
+  assert.match(ticket, /Clienta: Valeria/);
+  assert.match(ticket, /3 × Iluminador Coquette/);
+  assert.match(ticket, /Total: S\/ 60\.00/);
+  assert.match(ticket, /Adelanto pagado: S\/ 15\.00/);
+  assert.match(ticket, /Saldo pendiente: S\/ 45\.00/);
+  assert.match(ticket, /UNAC Puerta Principal/);
 });
 
 
