@@ -29,4 +29,4 @@
 
 ### Sub-wave 5B (Parallel after 5A integrates: Codex Agente A `21e8` + Agente C `7486`)
 - [x] **P5-T3 (`Agente A` in `21e8` -> `StorefrontView.jsx`, `SalesView.jsx`, `StorefrontAdminView.jsx`, `App.jsx`, `styles.css`)**: Implement 3-card Delivery Selector, 100% vs 50% separation toggle with terms checkbox, 15-min hold timer, live Realtime availability badges, ERP Dispatch Queue & Tracking/4-digit-PIN modal, "Cancelar y Reembolsar Parcialmente" modal, and shipping methods tariff editor (`92c2404`, cherry-picked as `6c300a5`; Lima TZ fix `f5e0ff6`).
-- [ ] **P5-T4 (`Agente C` in `7486` + Antigravity)**: Full unit, PGlite, build, headless Playwright, and live production deployment & Supabase SQL execution.
+- [x] **P5-T4 (`Agente C` in `7486` + Antigravity)**: Full unit (`42/42`), PGlite, Vite build, headless Playwright E2E (`12/12` in `tests/e2e/phase5_ui.test.mjs` covering `360x800`/`390x844`/`1280x800` after `styles.css` radio-width fix `951c64b`), live Supabase SQL migration (`shipping_methods_count: 4`, `live_variants_count: 147`), and production GitHub Pages deployment.
