@@ -3961,7 +3961,9 @@ export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
             shadeName: v.shadeName,
             colorHex: v.colorHex,
             imageUrl: v.imageUrl || v.image_url || '',
-            stock: v.stock
+            stock: v.stock,
+            reservedUnpaid: v.reservedUnpaid || 0,
+            reservedAdvance: v.reservedAdvance || 0
           }))
       })),
     combos: (source.combos || [])
@@ -4028,6 +4030,8 @@ export async function wakeAndCheckYapeGateway() {
 export function normalizeWebOrderPayload(payload = {}) {
   const buyerName = String(payload.buyerName || payload.customerName || '').trim();
   const buyerWhatsapp = String(payload.buyerWhatsapp || payload.customerWhatsapp || '').trim();
+  const deliveryMethod = String(payload.deliveryMethod || 'unac_pickup').trim() || 'unac_pickup';
+  const paymentPlan = payload.paymentPlan === 'advance_50' ? 'advance_50' : 'full';
   return {
     ...payload,
     buyerName,
@@ -4035,6 +4039,12 @@ export function normalizeWebOrderPayload(payload = {}) {
     buyerWhatsapp,
     customerWhatsapp: buyerWhatsapp,
     yapeHolderName: String(payload.yapeHolderName || '').trim(),
+    deliveryMethod,
+    recipientDni: String(payload.recipientDni || '').replace(/\D/g, ''),
+    destinationRegion: String(payload.destinationRegion || '').trim(),
+    destinationAddress: String(payload.destinationAddress || '').trim(),
+    paymentPlan,
+    termsAccepted: Boolean(payload.termsAccepted),
     notes: String(payload.notes || '').trim()
   };
 }
@@ -4047,13 +4057,15 @@ export function normalizeWebOrderResult(data) {
       data.verificationStatus === 'verified_auto' ||
       data.verificationStatus === 'verified_manual'
   );
+  const balanceDue = Number(data.balanceDue ?? 0);
   const code = data.code || data.saleCode || data.sale_code || '';
   return {
     ...data,
     code,
     saleCode: code,
     verified: isVerified,
-    isPaid: isVerified
+    isPaid: isVerified,
+    isFullyPaid: isVerified && balanceDue <= 0.009
   };
 }
 
