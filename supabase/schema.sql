@@ -1005,7 +1005,12 @@ begin
       greatest(round(order_total * 0.5, 2), least(order_total, method_row.min_advance_amount))
     else round(order_total * 0.5, 2)
   end;
-  separation_due := coalesce(slot_row.slot_date::timestamptz, now() + interval '48 hours') + interval '24 hours';
+  separation_due := case
+    when slot_row.slot_date is not null then
+      ((slot_row.slot_date::timestamp + time '23:59:59') at time zone 'America/Lima') + interval '24 hours'
+    else
+      now() + interval '48 hours'
+  end;
 
   -- Check Triple Matching in yape_incoming_payments (Exact Amount + Normalized Holder Name + last 15 min window)
   norm_holder := public.normalize_person_name(yape_holder);
@@ -1132,6 +1137,7 @@ begin
     'deliveryMethod', method_id,
     'shippingPaymentMode', method_row.shipping_payment_mode,
     'reservationExpiresAt', reserve_until,
+    'separationDueAt', separation_due,
     'balanceDue', bal_due,
     'verificationStatus', verif_status,
     'yapeHolderName', yape_holder,
