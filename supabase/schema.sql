@@ -404,6 +404,204 @@ begin
   end loop;
 end $$;
 
+-- Carrier configuration and reservation metadata. Existing orders keep their
+-- legacy defaults; only new unpaid web orders receive a reservation deadline.
+create table if not exists public.shipping_methods (
+  id text primary key,
+  code text not null unique,
+  name text not null,
+  carrier text not null check (carrier in ('unac', 'shalom', 'olva', 'express')),
+  shipping_payment_mode text not null check (shipping_payment_mode in ('free', 'collect_on_delivery', 'prepaid_to_pipo')),
+  base_fee numeric(12,2) not null default 0 check (base_fee >= 0),
+  min_advance_amount numeric(12,2) not null default 0 check (min_advance_amount >= 0),
+  requires_dni boolean not null default false,
+  requires_address boolean not null default false,
+  active boolean not null default true,
+  sort_order integer not null default 0,
+  description text default '',
+  created_at timestamptz not null default now()
+);
+
+insert into public.shipping_methods (
+  id, code, name, carrier, shipping_payment_mode, base_fee, min_advance_amount,
+  requires_dni, requires_address, active, sort_order, description
+) values
+  ('unac_pickup', 'ENV-UNAC', 'Entrega en UNAC / Puntos Glow', 'unac', 'free', 0, 0, false, false, true, 1, 'Entrega coordinada sin costo de envío'),
+  ('shalom_agency', 'ENV-SHALOM', 'Shalom · Agencia a Agencia (Flete pago en destino)', 'shalom', 'collect_on_delivery', 0, 30, true, false, true, 2, 'Recoges en agencia Shalom con tu DNI y pagas el flete allá'),
+  ('olva_lima', 'ENV-OLVA-LIM', 'Olva Courier · Lima Metropolitana y Callao', 'olva', 'prepaid_to_pipo', 10, 30, true, true, true, 3, 'Envío a domicilio 24-48h hábiles'),
+  ('olva_provincia', 'ENV-OLVA-PROV', 'Olva Courier · Provincias a Domicilio', 'olva', 'prepaid_to_pipo', 20, 30, true, true, true, 4, 'Envío a domicilio 48-72h hábiles')
+on conflict (id) do nothing;
+
+alter table public.shipping_methods enable row level security;
+alter table public.shipping_methods force row level security;
+revoke all on public.shipping_methods from public, anon, authenticated;
+grant select, insert, update, delete on public.shipping_methods to authenticated;
+drop policy if exists "Owners manage shipping methods" on public.shipping_methods;
+create policy "Owners manage shipping methods" on public.shipping_methods
+  for all to authenticated using (public.is_pipo_owner()) with check (public.is_pipo_owner());
+
+alter table public.customers add column if not exists dni text default '';
+alter table public.sales
+  add column if not exists delivery_method text not null default 'unac_pickup',
+  add column if not exists shipping_payment_mode text not null default 'free',
+  add column if not exists recipient_dni text default '',
+  add column if not exists destination_region text default '',
+  add column if not exists destination_address text default '',
+  add column if not exists carrier_tracking_code text default '',
+  add column if not exists carrier_security_code text default '',
+  add column if not exists fulfillment_stage text not null default 'pending_pack',
+  add column if not exists payment_plan text not null default 'full' check (payment_plan in ('full', 'advance_50')),
+  add column if not exists expected_initial_payment numeric(12,2) not null default 0,
+  add column if not exists reservation_expires_at timestamptz,
+  add column if not exists separation_due_at timestamptz,
+  add column if not exists terms_accepted_at timestamptz,
+  add column if not exists refunded_amount numeric(12,2) not null default 0,
+  add column if not exists forfeited_fee_amount numeric(12,2) not null default 0;
+
+do $$
+declare
+  concept_check record;
+begin
+  for concept_check in
+    select c.conname
+    from pg_constraint c
+    join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+    where c.conrelid = 'public.sale_payments'::regclass
+      and c.contype = 'c' and a.attname = 'payment_concept' and cardinality(c.conkey) = 1
+  loop
+    execute format('alter table public.sale_payments drop constraint %I', concept_check.conname);
+  end loop;
+  alter table public.sale_payments add constraint sale_payments_payment_concept_check
+    check (payment_concept in ('shipping_advance', 'order_advance', 'full_payment', 'delivery_balance', 'partial_refund', 'forfeited_retention'));
+end $$;
+
+create index if not exists idx_sales_expiring_web_reservations on public.sales (reservation_expires_at)
+  where order_source = 'web' and status = 'pending_delivery'
+    and payment_verification_status = 'pending_verification' and amount_paid = 0;
+
+create table if not exists public.public_variant_availability (
+  variant_id uuid primary key references public.product_variants(id) on delete cascade,
+  stock integer not null default 0,
+  reserved_unpaid integer not null default 0,
+  reserved_advance integer not null default 0,
+  available_stock integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.public_variant_availability enable row level security;
+alter table public.public_variant_availability force row level security;
+alter table public.public_variant_availability replica identity full;
+revoke all on public.public_variant_availability from public, anon, authenticated;
+grant select on public.public_variant_availability to anon, authenticated;
+drop policy if exists "Public read variant availability" on public.public_variant_availability;
+create policy "Public read variant availability" on public.public_variant_availability
+  for select to anon, authenticated using (true);
+
+do $$
+begin
+  alter publication supabase_realtime add table public.public_variant_availability;
+exception when duplicate_object then null;
+end $$;
+
+create or replace function public.sync_public_variant_availability(target_variant_id uuid default null)
+returns void language plpgsql security definer set search_path = public
+as $$
+begin
+  -- Serialize computation with stock writes and other payment transitions.
+  perform 1 from public.product_variants v
+  where target_variant_id is null or v.id = target_variant_id
+  order by v.id for update;
+
+  insert into public.public_variant_availability as availability (
+    variant_id, stock, reserved_unpaid, reserved_advance, available_stock
+  )
+  select v.id, v.stock, coalesce(reservation.unpaid, 0), coalesce(reservation.advance, 0), v.stock
+  from public.product_variants v
+  left join lateral (
+    select sum(si.quantity) filter (
+             where s.payment_verification_status = 'pending_verification' and s.amount_paid = 0
+           ) as unpaid,
+           sum(si.quantity) filter (where s.balance_due > 0 and s.amount_paid > 0) as advance
+    from public.sale_items si join public.sales s on s.id = si.sale_id
+    where si.variant_id = v.id and s.order_source = 'web' and s.status = 'pending_delivery'
+  ) reservation on true
+  where target_variant_id is null or v.id = target_variant_id
+  on conflict (variant_id) do update
+  set stock = excluded.stock, reserved_unpaid = excluded.reserved_unpaid,
+      reserved_advance = excluded.reserved_advance, available_stock = excluded.available_stock,
+      updated_at = now()
+  where (availability.stock, availability.reserved_unpaid, availability.reserved_advance, availability.available_stock)
+    is distinct from (excluded.stock, excluded.reserved_unpaid, excluded.reserved_advance, excluded.available_stock);
+end;
+$$;
+
+create or replace function public.sync_public_variant_availability_trigger()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    delete from public.public_variant_availability where variant_id = old.id;
+  else
+    perform public.sync_public_variant_availability(new.id);
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists sync_public_variant_availability on public.product_variants;
+create trigger sync_public_variant_availability
+  after insert or update of stock or delete on public.product_variants
+  for each row execute function public.sync_public_variant_availability_trigger();
+
+select public.sync_public_variant_availability();
+
+create or replace function public.release_expired_web_reservations()
+returns integer language plpgsql security definer set search_path = public
+as $$
+declare
+  expired_ids uuid[];
+  restore_row record;
+begin
+  with expired as (
+    select s.id from public.sales s
+    where s.order_source = 'web' and s.status = 'pending_delivery'
+      and s.payment_verification_status = 'pending_verification' and s.amount_paid = 0
+      and s.reservation_expires_at < now()
+    order by s.id for update skip locked
+  ), cancelled as (
+    update public.sales s
+    set status = 'cancelled', balance_due = 0,
+        notes = coalesce(s.notes, '') || ' [Reserva expirada automáticamente tras 15 min sin pago]'
+    from expired where s.id = expired.id returning s.id
+  )
+  select coalesce(array_agg(id), '{}'::uuid[]) into expired_ids from cancelled;
+
+  for restore_row in
+    select s.delivery_slot_id, count(*) as quantity from public.sales s
+    where s.id = any(expired_ids) and s.delivery_slot_id is not null
+    group by s.delivery_slot_id order by s.delivery_slot_id
+  loop
+    update public.delivery_slots set booked_orders = greatest(0, booked_orders - restore_row.quantity)
+    where id = restore_row.delivery_slot_id;
+  end loop;
+
+  for restore_row in
+    select si.variant_id, sum(si.quantity) as quantity from public.sale_items si
+    where si.sale_id = any(expired_ids) and si.variant_id is not null
+    group by si.variant_id order by si.variant_id
+  loop
+    -- The variant trigger projects the restored stock and new reserve counts.
+    update public.product_variants set stock = stock + restore_row.quantity where id = restore_row.variant_id;
+  end loop;
+  return cardinality(expired_ids);
+end;
+$$;
+
+revoke execute on function public.sync_public_variant_availability(uuid) from public, anon, authenticated;
+revoke execute on function public.sync_public_variant_availability_trigger() from public, anon, authenticated;
+revoke execute on function public.release_expired_web_reservations() from public, anon, authenticated;
+grant execute on function public.release_expired_web_reservations() to service_role;
+
 -- ============================================================================
 -- 10. Public Storefront RPCs (SECURITY DEFINER — Zero Cost/Financial Leakage)
 -- ============================================================================
@@ -437,6 +635,8 @@ as $$
 declare
   result jsonb;
 begin
+  perform public.release_expired_web_reservations();
+
   select jsonb_build_object(
     'categories', coalesce((
       select jsonb_agg(pc.name order by pc.sort_order asc, pc.created_at asc)
@@ -473,11 +673,14 @@ begin
           'shadeName', v.shade_name,
           'colorHex', v.color_hex,
           'imageUrl', coalesce(v.image_url, ''),
-          'stock', v.stock
+           'stock', v.stock,
+           'reservedUnpaid', coalesce(a.reserved_unpaid, 0),
+           'reservedAdvance', coalesce(a.reserved_advance, 0)
         ) order by v.created_at asc
       )
       from public.product_variants v
       join public.products p on p.id = v.product_id
+      left join public.public_variant_availability a on a.variant_id = v.id
       where p.active = true and coalesce(p.is_visible_public, true) = true
     ), '[]'::jsonb),
     'combos', coalesce((
@@ -509,6 +712,16 @@ begin
       )
       from public.combos c
       where c.active = true and coalesce(c.is_visible_public, true) = true
+    ), '[]'::jsonb),
+    'shippingMethods', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', m.id, 'code', m.code, 'name', m.name, 'carrier', m.carrier,
+        'shippingPaymentMode', m.shipping_payment_mode, 'baseFee', m.base_fee,
+        'minAdvanceAmount', m.min_advance_amount, 'requiresDni', m.requires_dni,
+        'requiresAddress', m.requires_address, 'active', m.active,
+        'sortOrder', m.sort_order, 'description', coalesce(m.description, '')
+      ) order by m.sort_order, m.id)
+      from public.shipping_methods m where m.active
     ), '[]'::jsonb),
     'deliveryPoints', coalesce((
       select jsonb_agg(
@@ -603,6 +816,12 @@ declare
   slot_id uuid := nullif(trim(coalesce(payload ->> 'deliverySlotId', '')), '')::uuid;
   custom_notes text := trim(coalesce(payload ->> 'notes', ''));
   items_json jsonb := coalesce(payload -> 'items', '[]'::jsonb);
+  method_id text := coalesce(nullif(trim(payload ->> 'deliveryMethod'), ''), 'unac_pickup');
+  recipient_dni_value text := regexp_replace(coalesce(payload ->> 'recipientDni', ''), '\D', '', 'g');
+  region_value text := trim(coalesce(payload ->> 'destinationRegion', ''));
+  address_value text := trim(coalesce(payload ->> 'destinationAddress', ''));
+  plan text := coalesce(nullif(trim(payload ->> 'paymentPlan'), ''), 'full');
+  terms_accepted boolean := coalesce((payload -> 'termsAccepted') = 'true'::jsonb, false);
 
   cust_id uuid;
   cust_code text;
@@ -610,6 +829,7 @@ declare
   sale_code text;
   point_row public.delivery_points%rowtype;
   slot_row public.delivery_slots%rowtype;
+  method_row public.shipping_methods%rowtype;
   delivery_loc text := '';
   delivery_dt date := null;
   delivery_tm text := '';
@@ -633,6 +853,11 @@ declare
   verif_status text := 'pending_verification';
   paid_amt numeric(12,2) := 0;
   bal_due numeric(12,2) := 0;
+  ship_fee numeric(12,2);
+  order_total numeric(12,2);
+  expected_init numeric(12,2);
+  reserve_until timestamptz;
+  separation_due timestamptz;
   max_sale_num integer := 0;
   max_cust_num integer := 0;
 begin
@@ -647,6 +872,26 @@ begin
   end if;
   if jsonb_array_length(items_json) = 0 then
     raise exception 'Tu carrito está vacío.';
+  end if;
+
+  select * into method_row from public.shipping_methods where id = method_id and active;
+  if not found then
+    raise exception 'El método de entrega seleccionado ya no está disponible.';
+  end if;
+  if method_row.requires_dni and length(recipient_dni_value) <> 8 then
+    raise exception 'Ingresa un DNI de 8 dígitos para este método de entrega.';
+  end if;
+  if method_row.requires_address and (region_value = '' or address_value = '') then
+    raise exception 'Ingresa la región y dirección de destino.';
+  end if;
+  if method_id = 'shalom_agency' and region_value = '' then
+    raise exception 'Ingresa la ciudad o agencia de destino de Shalom.';
+  end if;
+  if plan not in ('full', 'advance_50') then
+    raise exception 'Selecciona un plan de pago válido.';
+  end if;
+  if plan = 'advance_50' and not terms_accepted then
+    raise exception 'Acepta los términos de separación antes de continuar.';
   end if;
 
   if point_id is not null then
@@ -752,12 +997,23 @@ begin
     total_cst := total_cst + line_cst;
   end loop;
 
+  ship_fee := round(method_row.base_fee, 2);
+  order_total := round(total_rev + ship_fee, 2);
+  expected_init := case
+    when plan = 'full' then order_total
+    when method_row.min_advance_amount > 0 then
+      greatest(round(order_total * 0.5, 2), least(order_total, method_row.min_advance_amount))
+    else round(order_total * 0.5, 2)
+  end;
+  separation_due := coalesce(slot_row.slot_date::timestamptz, now() + interval '48 hours') + interval '24 hours';
+
   -- Check Triple Matching in yape_incoming_payments (Exact Amount + Normalized Holder Name + last 15 min window)
   norm_holder := public.normalize_person_name(yape_holder);
   select yip.id into matched_yape_id
   from public.yape_incoming_payments yip
   where yip.consumed = false
-    and yip.amount = total_rev
+    and yip.amount = expected_init
+    and norm_holder <> '' and yip.normalized_sender_name <> ''
     and yip.received_at >= now() - interval '15 minutes'
     and (
       yip.normalized_sender_name = norm_holder
@@ -766,16 +1022,17 @@ begin
     )
   order by yip.received_at desc
   limit 1
-  for update;
+  for update skip locked;
 
   if matched_yape_id is not null then
     verif_status := 'verified_auto';
-    paid_amt := total_rev;
-    bal_due := 0;
+    paid_amt := expected_init;
+    bal_due := greatest(0, order_total - paid_amt);
   else
     verif_status := 'pending_verification';
     paid_amt := 0;
-    bal_due := total_rev;
+    bal_due := order_total;
+    reserve_until := now() + interval '15 minutes';
   end if;
 
   select coalesce(max((regexp_match(code, '^VTA-(\d+)$'))[1]::integer), 0)
@@ -792,16 +1049,20 @@ begin
     products_revenue, products_cost, supplies_cost,
     total_charged, net_profit, amount_paid, balance_due,
     notes, created_by, order_source, yape_holder_name,
-    payment_verification_status, delivery_point_id, delivery_slot_id
+    payment_verification_status, delivery_point_id, delivery_slot_id,
+    delivery_method, shipping_payment_mode, recipient_dni, destination_region, destination_address,
+    payment_plan, expected_initial_payment, reservation_expires_at, separation_due_at, terms_accepted_at
   ) values (
     sale_id, sale_code, current_date, cust_id, 'pending_delivery',
     delivery_dt, delivery_tm, delivery_loc,
-    0, 0, total_u,
+    ship_fee, ship_fee, total_u,
     total_rev, total_cst, 0,
-    total_rev, round(total_rev - total_cst, 2), paid_amt, bal_due,
+    order_total, round(total_rev - total_cst, 2), paid_amt, bal_due,
     trim('Pedido Tienda Web · Titular Yape: ' || yape_holder || case when custom_notes <> '' then ' · ' || custom_notes else '' end),
     'Tienda Web', 'web', yape_holder,
-    verif_status, point_id, slot_id
+    verif_status, point_id, slot_id,
+    method_id, method_row.shipping_payment_mode, recipient_dni_value, region_value, address_value,
+    plan, expected_init, reserve_until, separation_due, case when terms_accepted then now() end
   );
 
   -- Second pass: insert sale_items and deduct stock
@@ -857,13 +1118,21 @@ begin
     where id = matched_yape_id;
 
     insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
-    values (sale_id, total_rev, 'yape', 'full_payment', 'Validado automáticamente por Detector Yape (' || yape_holder || ')');
+    values (sale_id, expected_init, 'yape', case when plan = 'advance_50' then 'order_advance' else 'full_payment' end,
+      'Validado automáticamente por Detector Yape (' || yape_holder || ')');
   end if;
 
   return jsonb_build_object(
     'saleId', sale_id,
     'saleCode', sale_code,
-    'totalCharged', total_rev,
+    'totalCharged', order_total,
+    'expectedInitialPayment', expected_init,
+    'paymentPlan', plan,
+    'shippingCharged', ship_fee,
+    'deliveryMethod', method_id,
+    'shippingPaymentMode', method_row.shipping_payment_mode,
+    'reservationExpiresAt', reserve_until,
+    'balanceDue', bal_due,
     'verificationStatus', verif_status,
     'yapeHolderName', yape_holder,
     'deliveryLocation', delivery_loc,
@@ -872,6 +1141,52 @@ begin
   );
 end;
 $$;
+
+-- These helpers are internal. Callers lock the sale before applying a payment.
+create or replace function public.web_order_expected_payment(s public.sales)
+returns numeric language sql immutable set search_path = public
+as $$
+  select case when s.payment_plan = 'advance_50' and s.amount_paid = 0 and s.expected_initial_payment > 0
+    then s.expected_initial_payment else s.balance_due end;
+$$;
+
+create or replace function public.apply_web_order_yape_payment(s public.sales, verification text, payment_note text)
+returns public.sales language plpgsql set search_path = public
+as $$
+declare
+  expected_pay numeric := public.web_order_expected_payment(s);
+  payment_kind text;
+  affected_variant uuid;
+begin
+  if expected_pay <= 0 then
+    return s;
+  end if;
+  payment_kind := case when s.amount_paid > 0 then 'delivery_balance'
+    when s.payment_plan = 'advance_50' and s.expected_initial_payment > 0 then 'order_advance'
+    else 'full_payment' end;
+
+  insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
+  values (s.id, expected_pay, 'yape', payment_kind, payment_note);
+
+  update public.sales
+  set amount_paid = amount_paid + expected_pay,
+      balance_due = greatest(0, total_charged - (amount_paid + expected_pay)),
+      reservation_expires_at = null,
+      payment_verification_status = verification
+  where id = s.id returning * into s;
+
+  for affected_variant in
+    select distinct si.variant_id from public.sale_items si
+    where si.sale_id = s.id and si.variant_id is not null order by si.variant_id
+  loop
+    perform public.sync_public_variant_availability(affected_variant);
+  end loop;
+  return s;
+end;
+$$;
+
+revoke execute on function public.web_order_expected_payment(public.sales) from public, anon, authenticated;
+revoke execute on function public.apply_web_order_yape_payment(public.sales, text, text) from public, anon, authenticated;
 
 -- 10.5 Check or Match Yape Payment for an Active Web Order (Polling / Realtime Verification)
 create or replace function public.check_web_order_yape_status(target_sale_id uuid)
@@ -884,66 +1199,52 @@ declare
   s_row public.sales%rowtype;
   matched_yape_id uuid := null;
   norm_holder text;
+  expected_pay numeric;
+  earliest_payment timestamptz;
 begin
-  select * into s_row from public.sales where id = target_sale_id;
-  if s_row.id is null then
+  select * into s_row from public.sales where id = target_sale_id and order_source = 'web' for update;
+  if not found then
     raise exception 'Pedido no encontrado.';
   end if;
 
-  if s_row.payment_verification_status in ('verified_auto', 'verified_manual') or s_row.balance_due <= 0 then
-    return jsonb_build_object(
-      'saleId', s_row.id,
-      'saleCode', s_row.code,
-      'verificationStatus', s_row.payment_verification_status,
-      'isPaid', true
-    );
-  end if;
+  if s_row.status = 'pending_delivery' and s_row.balance_due > 0
+    and (s_row.reservation_expires_at is null or s_row.reservation_expires_at >= now()) then
+    expected_pay := public.web_order_expected_payment(s_row);
+    norm_holder := public.normalize_person_name(s_row.yape_holder_name);
+    earliest_payment := s_row.created_at - interval '10 minutes';
+    if s_row.amount_paid > 0 then
+      select greatest(s_row.created_at, max(sp.payment_date)) into earliest_payment
+      from public.sale_payments sp where sp.sale_id = s_row.id;
+    end if;
 
-  norm_holder := public.normalize_person_name(s_row.yape_holder_name);
+    select yip.id into matched_yape_id
+    from public.yape_incoming_payments yip
+    where not yip.consumed and yip.amount = expected_pay and yip.received_at >= earliest_payment
+      and norm_holder <> '' and yip.normalized_sender_name <> ''
+      and (
+        yip.normalized_sender_name = norm_holder
+        or yip.normalized_sender_name like '%' || norm_holder || '%'
+        or norm_holder like '%' || yip.normalized_sender_name || '%'
+      )
+    order by yip.received_at desc limit 1 for update skip locked;
 
-  select yip.id into matched_yape_id
-  from public.yape_incoming_payments yip
-  where yip.consumed = false
-    and yip.amount = s_row.total_charged
-    and yip.received_at >= s_row.created_at - interval '10 minutes'
-    and (
-      yip.normalized_sender_name = norm_holder
-      or yip.normalized_sender_name like '%' || norm_holder || '%'
-      or norm_holder like '%' || yip.normalized_sender_name || '%'
-    )
-  order by yip.received_at desc
-  limit 1
-  for update;
-
-  if matched_yape_id is not null then
-    update public.yape_incoming_payments
-    set consumed = true,
-        matched_sale_id = s_row.id
-    where id = matched_yape_id;
-
-    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
-    values (s_row.id, s_row.total_charged, 'yape', 'full_payment', 'Validado automáticamente por Detector Yape (' || s_row.yape_holder_name || ')');
-
-    update public.sales
-    set amount_paid = total_charged,
-        balance_due = 0,
-        payment_verification_status = 'verified_auto'
-    where id = s_row.id
-    returning * into s_row;
-
-    return jsonb_build_object(
-      'saleId', s_row.id,
-      'saleCode', s_row.code,
-      'verificationStatus', 'verified_auto',
-      'isPaid', true
-    );
+    if matched_yape_id is not null then
+      update public.yape_incoming_payments set consumed = true, matched_sale_id = s_row.id
+      where id = matched_yape_id;
+      s_row := public.apply_web_order_yape_payment(s_row, 'verified_auto',
+        'Validado automáticamente por Detector Yape (' || s_row.yape_holder_name || ')');
+    end if;
   end if;
 
   return jsonb_build_object(
     'saleId', s_row.id,
     'saleCode', s_row.code,
     'verificationStatus', s_row.payment_verification_status,
-    'isPaid', false
+    'isPaid', s_row.status <> 'cancelled' and s_row.balance_due <= 0,
+    'balanceDue', s_row.balance_due,
+    'amountPaid', s_row.amount_paid,
+    'status', s_row.status,
+    'reservationExpiresAt', s_row.reservation_expires_at
   );
 end;
 $$;
@@ -1013,8 +1314,11 @@ begin
   from public.sales s
   where s.order_source = 'web'
     and s.status = 'pending_delivery'
-    and s.balance_due = round(payment_amount, 2)
-    and s.created_at >= now() - interval '20 minutes'
+    and s.balance_due > 0
+    and public.web_order_expected_payment(s) = round(payment_amount, 2)
+    and (s.reservation_expires_at is null or s.reservation_expires_at >= now())
+    and (s.created_at >= now() - interval '20 minutes' or (s.payment_plan = 'advance_50' and s.amount_paid > 0))
+    and norm_name <> '' and public.normalize_person_name(s.yape_holder_name) <> ''
     and (
       public.normalize_person_name(s.yape_holder_name) = norm_name
       or public.normalize_person_name(s.yape_holder_name) like '%' || norm_name || '%'
@@ -1030,14 +1334,8 @@ begin
         matched_sale_id = pending_sale.id
     where id = new_id;
 
-    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
-    values (pending_sale.id, pending_sale.total_charged, 'yape', 'full_payment', 'Validado en vivo por Detector Yape (' || trim(sender_name) || ')');
-
-    update public.sales
-    set amount_paid = total_charged,
-        balance_due = 0,
-        payment_verification_status = 'verified_auto'
-    where id = pending_sale.id;
+    pending_sale := public.apply_web_order_yape_payment(pending_sale, 'verified_auto',
+      'Validado en vivo por Detector Yape (' || trim(sender_name) || ')');
 
     return jsonb_build_object(
       'paymentId', new_id,
@@ -1124,8 +1422,7 @@ begin
 end;
 $$;
 
--- Owner action addresses a specific active web order; the row lock makes
--- retries atomic and records only the outstanding balance, never the full total twice.
+-- Owner action addresses a specific active web order and records one installment at a time.
 create or replace function public.confirm_web_order_payment_manual(target_sale_id uuid)
 returns jsonb
 language plpgsql
@@ -1147,26 +1444,124 @@ begin
     raise exception 'Solo se pueden confirmar pedidos web pendientes de entrega.';
   end if;
 
-  if s_row.balance_due > 0 then
-    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
-    values (s_row.id, s_row.balance_due, 'yape',
-      case when s_row.amount_paid > 0 then 'delivery_balance' else 'full_payment' end,
-      'Recepción de Yape confirmada manualmente por propietario');
+  if s_row.amount_paid = 0 and s_row.reservation_expires_at < now() then
+    raise exception 'La reserva de este pedido expiró.';
   end if;
 
-  update public.sales
-  set amount_paid = total_charged,
-      balance_due = 0,
-      payment_verification_status = 'verified_manual'
-  where id = s_row.id
-  returning * into s_row;
+  s_row := public.apply_web_order_yape_payment(s_row, 'verified_manual',
+    'Recepción de Yape confirmada manualmente por propietario');
 
   return jsonb_build_object(
     'saleId', s_row.id,
     'saleCode', s_row.code,
     'verificationStatus', s_row.payment_verification_status,
-    'isPaid', true
+    'isPaid', s_row.balance_due <= 0,
+    'balanceDue', s_row.balance_due,
+    'amountPaid', s_row.amount_paid,
+    'reservationExpiresAt', s_row.reservation_expires_at
   );
+end;
+$$;
+
+create or replace function public.cancel_sale_with_partial_refund(
+  target_sale_id uuid, refund_amount numeric default 0, refund_method text default 'yape',
+  retained_fee numeric default 0, reason_note text default ''
+)
+returns jsonb language plpgsql security definer set search_path = public
+as $$
+declare
+  s_row public.sales%rowtype;
+  refund_value numeric(12,2) := round(coalesce(refund_amount, 0), 2);
+  retained_value numeric(12,2) := round(coalesce(retained_fee, 0), 2);
+  method_value text := lower(trim(coalesce(refund_method, 'yape')));
+  reason_value text := trim(coalesce(reason_note, ''));
+  restore_row record;
+begin
+  if not coalesce(public.is_pipo_owner(), false) then
+    raise exception 'No autorizado';
+  end if;
+
+  select * into s_row from public.sales where id = target_sale_id for update;
+  if not found then
+    raise exception 'Pedido no encontrado.';
+  end if;
+  if s_row.status = 'cancelled' then
+    return jsonb_build_object('saleId', s_row.id, 'status', s_row.status,
+      'refundedAmount', s_row.refunded_amount, 'forfeitedFeeAmount', s_row.forfeited_fee_amount);
+  end if;
+
+  if refund_value < 0 or retained_value < 0 or refund_value + retained_value > s_row.amount_paid then
+    raise exception 'El reembolso y la retención no pueden superar lo pagado.';
+  end if;
+  if method_value not in ('yape', 'plin', 'cash', 'transfer') then
+    raise exception 'Método de reembolso inválido.';
+  end if;
+
+  update public.sales
+  set status = 'cancelled', balance_due = 0, reservation_expires_at = null,
+      refunded_amount = refund_value, forfeited_fee_amount = retained_value,
+      notes = case when reason_value <> '' then concat_ws(' · ', nullif(notes, ''), reason_value) else notes end
+  where id = s_row.id returning * into s_row;
+
+  if s_row.delivery_slot_id is not null then
+    update public.delivery_slots set booked_orders = greatest(0, booked_orders - 1)
+    where id = s_row.delivery_slot_id;
+  end if;
+  for restore_row in
+    select si.variant_id, sum(si.quantity) as quantity from public.sale_items si
+    where si.sale_id = s_row.id and si.variant_id is not null
+    group by si.variant_id order by si.variant_id
+  loop
+    update public.product_variants set stock = stock + restore_row.quantity where id = restore_row.variant_id;
+  end loop;
+  for restore_row in
+    select ss.supply_id, sum(ss.quantity) as quantity from public.sale_supplies ss
+    where ss.sale_id = s_row.id and ss.supply_id is not null
+    group by ss.supply_id order by ss.supply_id
+  loop
+    update public.supplies set stock = stock + restore_row.quantity where id = restore_row.supply_id;
+  end loop;
+
+  -- These ledger amounts are positive; the concept distinguishes outflow and retention from receipts.
+  if refund_value > 0 then
+    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
+    values (s_row.id, refund_value, method_value, 'partial_refund', reason_value);
+  end if;
+  if retained_value > 0 then
+    insert into public.sale_payments (sale_id, amount, method, payment_concept, note)
+    values (s_row.id, retained_value, method_value, 'forfeited_retention', reason_value);
+  end if;
+
+  return jsonb_build_object('saleId', s_row.id, 'status', s_row.status,
+    'refundedAmount', s_row.refunded_amount, 'forfeitedFeeAmount', s_row.forfeited_fee_amount);
+end;
+$$;
+
+create or replace function public.update_sale_carrier_dispatch(
+  target_sale_id uuid, tracking_code text default '', security_code text default '', next_stage text default 'dispatched'
+)
+returns jsonb language plpgsql security definer set search_path = public
+as $$
+declare
+  s_row public.sales%rowtype;
+begin
+  if not coalesce(public.is_pipo_owner(), false) then
+    raise exception 'No autorizado';
+  end if;
+  if trim(coalesce(next_stage, '')) = '' then
+    raise exception 'Indica la etapa de despacho.';
+  end if;
+
+  update public.sales
+  set carrier_tracking_code = trim(coalesce(tracking_code, '')),
+      carrier_security_code = trim(coalesce(security_code, '')),
+      fulfillment_stage = trim(next_stage)
+  where id = target_sale_id returning * into s_row;
+  if not found then
+    raise exception 'Pedido no encontrado.';
+  end if;
+  return jsonb_build_object('saleId', s_row.id, 'carrierTrackingCode', s_row.carrier_tracking_code,
+    'carrierSecurityCode', s_row.carrier_security_code, 'fulfillmentStage', s_row.fulfillment_stage);
 end;
 $$;
 
@@ -1181,6 +1576,10 @@ grant execute on function public.register_incoming_yape_notification(text, numer
 grant execute on function public.ingest_yape_android_webhook(text, text) to anon, authenticated, service_role;
 revoke execute on function public.confirm_web_order_payment_manual(uuid) from public, anon;
 grant execute on function public.confirm_web_order_payment_manual(uuid) to authenticated, service_role;
+revoke execute on function public.cancel_sale_with_partial_refund(uuid, numeric, text, numeric, text) from public, anon;
+revoke execute on function public.update_sale_carrier_dispatch(uuid, text, text, text) from public, anon;
+grant execute on function public.cancel_sale_with_partial_refund(uuid, numeric, text, numeric, text) to authenticated, service_role;
+grant execute on function public.update_sale_carrier_dispatch(uuid, text, text, text) to authenticated, service_role;
 
 -- ============================================================================
 -- 10. Storefront Public Media Bucket ('storefront-media') & Storage RLS
