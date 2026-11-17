@@ -25,12 +25,13 @@ import {
 import { ProductDetailModal, ComboDetailModal } from './StorefrontDetailModals.jsx';
 import StorefrontSelect from './StorefrontSelect.jsx';
 import { matchesCatalogSearch, sortCatalogItems } from './catalogDiscovery.js';
-import { formatMoney } from '../../domain/calculations.js';
-import { PRODUCT_CATEGORIES } from '../../domain/constants.js';
+import { computeSeparationPolicy, formatMoney, roundMoney } from '../../domain/calculations.js';
+import { DEFAULT_SHIPPING_METHODS, PRODUCT_CATEGORIES, RESERVATION_HOLD_MINUTES, UNAC_MIN_RETENTION, UNAC_RETENTION_RATE } from '../../domain/constants.js';
 import {
   checkWebOrderYapeStatus,
   fetchPublicStorefrontCatalog,
   submitWebStorefrontOrder,
+  subscribePublicVariantAvailability,
   wakeAndCheckYapeGateway
 } from '../../adapters/storageRepository.js';
 
@@ -151,6 +152,7 @@ function buildCatalogFromDb(source) {
       source.categories && source.categories.length > 0
         ? source.categories
         : [...PRODUCT_CATEGORIES],
+    shippingMethods: source.shippingMethods,
     products: productsWithVariants,
     combos,
     deliveryPoints,
@@ -273,7 +275,7 @@ export default function StorefrontView({
   onOpenStaffLogin,
   onReturnToErp
 }) {
-  const [catalog, setCatalog] = useState(() => {
+  const [catalogSnapshot, setCatalog] = useState(() => {
     // 1. Intentar desde fallbackDb (inmediato si el usuario navega desde el ERP o ya cargó la app)
     const fromFallback = buildCatalogFromDb(fallbackDb);
     if (fromFallback && fromFallback.products.length > 0) return fromFallback;
@@ -300,6 +302,26 @@ export default function StorefrontView({
       yapeGateway: null
     };
   });
+
+  const [liveAvailability, setLiveAvailability] = useState(() => new Map());
+  useEffect(() => subscribePublicVariantAvailability(({ variantId, ...availability }) => {
+    setLiveAvailability((previous) => {
+      const existing = previous.get(variantId);
+      if (existing && Date.parse(existing.updatedAt) > Date.parse(availability.updatedAt)) return previous;
+      return new Map(previous).set(variantId, availability);
+    });
+  }), []);
+
+  const catalog = useMemo(() => ({
+    ...catalogSnapshot,
+    products: catalogSnapshot.products.map((product) => ({
+      ...product,
+      variants: (product.variants || []).map((variant) => {
+        const update = liveAvailability.get(variant.id);
+        return update ? { ...variant, ...update } : variant;
+      })
+    }))
+  }), [catalogSnapshot, liveAvailability]);
 
   // Solo mostrar skeleton loader si el catálogo está completamente vacío (primer ingreso limpio)
   const [loadingCatalog, setLoadingCatalog] = useState(() => {
@@ -400,6 +422,13 @@ export default function StorefrontView({
   const [selectedPointId, setSelectedPointId] = useState('');
   const [selectedSlotId, setSelectedSlotId] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
+  const [deliveryMethod, setDeliveryMethod] = useState('unac_pickup');
+  const [paymentPlan, setPaymentPlan] = useState('full');
+  const [recipientDni, setRecipientDni] = useState('');
+  const [destinationRegion, setDestinationRegion] = useState('');
+  const [destinationAddress, setDestinationAddress] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [clock, setClock] = useState(Date.now);
   const [checkoutError, setCheckoutError] = useState('');
   const [submittingOrder, setSubmittingOrder] = useState(false);
 
@@ -536,24 +565,61 @@ export default function StorefrontView({
     };
   }, [checkoutOpen]);
 
-  // Poll Yape Verification every 4 seconds while waiting in Step 'payment'
+  const pendingOrderId = checkoutStep === 'payment' ? activeOrder?.saleId : null;
+  const expiry = Date.parse(activeOrder?.reservationExpiresAt || '');
+  const showCountdown = Number.isFinite(expiry) && Number(activeOrder?.amountPaid || 0) === 0;
+  const secondsRemaining = showCountdown ? Math.max(0, Math.ceil((expiry - clock) / 1000)) : null;
+
+  const applyOrderStatus = useCallback((result) => {
+    if (!result) return false;
+    if (result.status === 'cancelled') {
+      setCheckoutStep('expired');
+      loadStorefront();
+      return true;
+    }
+    if (result.verified) {
+      setActiveOrder((previous) => ({ ...previous, ...result }));
+      setCheckoutStep('verified');
+      setCart([]);
+      loadStorefront();
+      return true;
+    }
+    if (Number(result.amountPaid) > 0) setActiveOrder((previous) => ({ ...previous, ...result }));
+    return false;
+  }, [loadStorefront]);
+
   useEffect(() => {
-    if (!checkoutOpen || checkoutStep !== 'payment' || !activeOrder?.saleId) return;
-    let mounted = true;
-    const interval = setInterval(async () => {
-      const res = await checkWebOrderYapeStatus(activeOrder.saleId);
-      if (mounted && res?.verified) {
-        setActiveOrder((prev) => ({ ...prev, ...res, verified: true }));
-        setCheckoutStep('verified');
-        setCart([]);
-        loadStorefront();
+    if (!checkoutOpen || !pendingOrderId) return;
+    let active = true;
+    let checking = false;
+    const poll = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await checkWebOrderYapeStatus(pendingOrderId);
+        if (active) applyOrderStatus(result);
+      } catch {
+        // Keep the existing order and try again on the next poll.
+      } finally {
+        checking = false;
       }
-    }, 4000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
     };
-  }, [checkoutOpen, checkoutStep, activeOrder?.saleId, loadStorefront]);
+    setClock(Date.now());
+    const ticker = setInterval(() => setClock(Date.now()), 1000);
+    const polling = setInterval(poll, 4000);
+    return () => {
+      active = false;
+      clearInterval(ticker);
+      clearInterval(polling);
+    };
+  }, [checkoutOpen, pendingOrderId, applyOrderStatus]);
+
+  useEffect(() => {
+    if (checkoutOpen && pendingOrderId && secondsRemaining === 0) {
+      setCheckoutStep('expired');
+      loadStorefront();
+    }
+  }, [checkoutOpen, pendingOrderId, secondsRemaining, loadStorefront]);
 
   const productsById = useMemo(
     () => new Map((catalog.products || []).map((p) => [p.id, p])),
@@ -583,7 +649,7 @@ export default function StorefrontView({
     if (activeCategory === 'COMBOS') return [];
     return sortCatalogItems((catalog.products || []).filter((p) => {
       const totalStock = (p.variants || []).reduce((total, v) => total + (v.stock || 0), 0);
-      if (totalStock <= 0) return false;
+      if (totalStock <= 0 && !p.variants?.some((v) => v.reservedUnpaid > 0 || v.reservedAdvance > 0)) return false;
       if (activeCategory !== 'ALL' && p.category !== activeCategory) return false;
       return matchesCatalogSearch(p, searchQuery);
     }), catalogOrder);
@@ -602,7 +668,7 @@ export default function StorefrontView({
 
   const availableSlotsForPoint = useMemo(() => {
     return (catalog.deliverySlots || []).filter(
-      (ds) => ds.deliveryPointId === selectedPointId && ds.active !== false
+      (ds) => ds.deliveryPointId === selectedPointId && ds.active !== false && (ds.bookedOrders || 0) < (ds.maxOrders ?? 10)
     );
   }, [catalog.deliverySlots, selectedPointId]);
 
@@ -961,12 +1027,23 @@ export default function StorefrontView({
     return { totalUnits, subtotal };
   }, [cart]);
 
+  const shippingMethods = Array.isArray(catalog.shippingMethods) ? catalog.shippingMethods : DEFAULT_SHIPPING_METHODS;
+  const activeMethods = shippingMethods.filter((method) => method.active !== false);
+  const chosenMethod = activeMethods.find((method) => method.id === deliveryMethod) || activeMethods[0];
+  const isPickup = chosenMethod?.id === 'unac_pickup';
+  const shippingFee = Number(chosenMethod?.baseFee || 0);
+  const collectShipping = chosenMethod?.shippingPaymentMode === 'collect_on_delivery';
+  const policy = computeSeparationPolicy({ totalCharged: roundMoney(cartSummary.subtotal + shippingFee),
+    deliveryMethod: chosenMethod?.id, shippingMethods, paymentPlan });
+  const paymentToday = activeOrder?.expectedInitialPayment ?? activeOrder?.totalCharged ?? policy.expectedInitialPayment;
+  const isSeparated = activeOrder?.paymentPlan === 'advance_50' && Number(activeOrder.balanceDue) > 0.009;
+
   function openCheckoutFlow() {
     if (cart.length === 0) return;
     setIsCartOpen(false);
     setCheckoutError('');
     setManualCheckHint('');
-    setCheckoutStep('form');
+    setCheckoutStep(activeOrder?.saleId && checkoutStep === 'payment' ? 'payment' : 'form');
     setCheckoutOpen(true);
   }
 
@@ -988,8 +1065,22 @@ export default function StorefrontView({
       );
       return;
     }
-    if (!selectedPointId) {
-      setCheckoutError('Selecciona un punto de entrega disponible.');
+    if (!chosenMethod || !cart.length || submittingOrder) return;
+    if (isPickup && (!(catalog.deliveryPoints || []).some((point) => point.id === selectedPointId)
+      || !availableSlotsForPoint.some((slot) => slot.id === selectedSlotId))) {
+      setCheckoutError('Selecciona un punto y un horario con cupos disponibles.');
+      return;
+    }
+    if (chosenMethod.requiresDni && !/^\d{8}$/.test(recipientDni)) {
+      setCheckoutError('El DNI debe tener 8 dígitos.');
+      return;
+    }
+    if (!isPickup && (!destinationRegion.trim() || (chosenMethod.requiresAddress && !destinationAddress.trim()))) {
+      setCheckoutError('Completa los datos de destino solicitados.');
+      return;
+    }
+    if (paymentPlan === 'advance_50' && !termsAccepted) {
+      setCheckoutError('Acepta las condiciones de separación para continuar.');
       return;
     }
 
@@ -999,8 +1090,14 @@ export default function StorefrontView({
         customerName: customerName.trim(),
         customerWhatsapp: customerWhatsapp.trim(),
         yapeHolderName: yapeHolderName.trim(),
-        deliveryPointId: selectedPointId,
-        deliverySlotId: selectedSlotId || null,
+        deliveryMethod: chosenMethod.id,
+        deliveryPointId: isPickup ? selectedPointId : null,
+        deliverySlotId: isPickup ? selectedSlotId : null,
+        recipientDni: chosenMethod.requiresDni ? recipientDni : '',
+        destinationRegion: isPickup ? '' : destinationRegion.trim(),
+        destinationAddress: chosenMethod.requiresAddress ? destinationAddress.trim() : '',
+        paymentPlan,
+        termsAccepted: paymentPlan === 'advance_50' && termsAccepted,
         notes: orderNotes.trim(),
         items: cart.map((item) => ({
           variantId: item.variantId,
@@ -1012,8 +1109,17 @@ export default function StorefrontView({
         }))
       });
 
-      setActiveOrder(orderRes);
-      if (orderRes?.verified) {
+      setClock(Date.now());
+      setActiveOrder({ paymentPlan, ...orderRes,
+        deliveryLocation: orderRes?.deliveryLocation || destinationRegion.trim() });
+      setRecipientDni('');
+      setDestinationRegion('');
+      setDestinationAddress('');
+      setTermsAccepted(false);
+      if (orderRes?.status === 'cancelled') {
+        setCheckoutStep('expired');
+        loadStorefront();
+      } else if (orderRes?.verified) {
         setCheckoutStep('verified');
         setCart([]);
         loadStorefront();
@@ -1033,16 +1139,13 @@ export default function StorefrontView({
     setManualCheckHint('');
     try {
       const res = await checkWebOrderYapeStatus(activeOrder.saleId);
-      if (res?.verified) {
-        setActiveOrder((prev) => ({ ...prev, ...res, verified: true }));
-        setCheckoutStep('verified');
-        setCart([]);
-        loadStorefront();
-      } else {
+      if (!applyOrderStatus(res)) {
         setManualCheckHint(
-          'Aún no llega la confirmación automática al sistema. Si ya realizaste el Yape, presiona "Avisar por WhatsApp" para enviar tu constancia y confirmar tu pedido al instante.'
+          'Aún no recibimos la confirmación del Yape. Si ya transferiste, avísanos por WhatsApp para que podamos revisar el pedido.'
         );
       }
+    } catch {
+      setManualCheckHint('No pudimos consultar el pago. Intenta de nuevo.');
     } finally {
       setCheckingPayment(false);
     }
@@ -1471,6 +1574,13 @@ export default function StorefrontView({
                                           />
                                         )}
                                         <span>{v.shadeName}</span>
+                                        {(v.reservedUnpaid > 0 || v.reservedAdvance > 0) && (
+                                          <small className="pipo-shade-reservations">
+                                            {v.stock} disponibles
+                                            {v.reservedUnpaid > 0 && ` · ${v.reservedUnpaid} en reserva temporal`}
+                                            {v.reservedAdvance > 0 && ` · ${v.reservedAdvance} separadas`}
+                                          </small>
+                                        )}
                                       </button>
                                     );
                                   })}
@@ -1484,6 +1594,11 @@ export default function StorefrontView({
                                 <span>{activeVar.stock} unidades disponibles para entrega</span>
                               </div>
                             )}
+
+                            {activeVar && <div className="pipo-reservation-badges">
+                              {activeVar.reservedUnpaid > 0 && <span className="badge badge-warning">{activeVar.reservedUnpaid} en reserva temporal</span>}
+                              {activeVar.reservedAdvance > 0 && <span className="badge badge-brand">{activeVar.reservedAdvance} separadas</span>}
+                            </div>}
 
                             <div className="pipo-card-detail-action">
                               <button
@@ -1543,7 +1658,7 @@ export default function StorefrontView({
               <span className="pipo-section-eyebrow">📍 Entregas seguras y puntuales</span>
               <h2 className="pipo-section-title">Puntos Oficiales de Entrega</h2>
               <p className="pipo-section-sub">
-                Todas nuestras entregas se realizan en puntos acordados (universidad, estaciones de
+                Para entregas presenciales coordinamos puntos como la universidad, estaciones de
                 tren o centros comerciales). Al finalizar tu pedido podrás elegir el lugar y horario
                 disponible.
               </p>
@@ -1815,7 +1930,7 @@ export default function StorefrontView({
               {cart.length > 0 && (
                 <div className="pipo-cart-drawer-footer">
                   <div className="pipo-cart-total-row">
-                    <span>Total a pagar (Sin comisiones)</span>
+                    <span>Subtotal de productos</span>
                     <strong>{formatMoney(cartSummary.subtotal)}</strong>
                   </div>
                   <button
@@ -1847,11 +1962,12 @@ export default function StorefrontView({
                   <span className="badge badge-brand">
                     {checkoutStep === 'form' && 'Paso 1 de 2 · Datos y Punto de Entrega'}
                     {checkoutStep === 'payment' && 'Paso 2 de 2 · Pago Seguro con Yape'}
-                    {checkoutStep === 'verified' && '✨ ¡Pedido Confirmado!'}
+                    {checkoutStep === 'verified' && (isSeparated ? 'Separación confirmada' : '✨ ¡Pedido Confirmado!')}
+                    {checkoutStep === 'expired' && 'Reserva temporal expirada'}
                   </span>
                   <h3 style={{ margin: '4px 0 0', fontFamily: 'var(--font-display)', fontSize: '1.35rem', color: 'var(--pipo-burgundy)' }}>
                     {checkoutStep === 'form' && 'Programa tu entrega Glow with Pipo'}
-                    {checkoutStep === 'payment' && `Realiza tu Yape por ${formatMoney(activeOrder?.totalCharged || cartSummary.subtotal)}`}
+                    {checkoutStep === 'payment' && `Realiza tu Yape por ${formatMoney(paymentToday)}`}
                     {checkoutStep === 'verified' && `¡Gracias por tu compra, ${customerName}!`}
                   </h3>
                 </div>
@@ -1943,10 +2059,54 @@ export default function StorefrontView({
                     </small>
                   </div>
 
+                  <fieldset className="pipo-shipping-fieldset">
+                    <legend>Método de entrega</legend>
+                    <div className="pipo-shipping-grid">
+                      {['unac', 'shalom', 'olva'].map((carrier) => {
+                        const methods = activeMethods.filter((method) => method.carrier === carrier);
+                        if (!methods.length) return null;
+                        const method = methods.find((item) => item.id === chosenMethod?.id) || methods[0];
+                        return (
+                          <label key={carrier} className="pipo-shipping-choice">
+                            <input type="radio" name="shipping-carrier" checked={chosenMethod?.carrier === carrier}
+                              onChange={() => { setDeliveryMethod(method.id); setTermsAccepted(false); }} />
+                            <span><strong>{carrier === 'unac' ? 'UNAC presencial' : carrier === 'shalom' ? 'Shalom Agencia' : 'Olva Courier'}</strong>
+                              <small>{carrier === 'shalom' ? 'Pagas el envío al recoger en agencia' : carrier === 'olva' ? 'Envío a domicilio prepagado' : formatMoney(method.baseFee)}</small></span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                  {!chosenMethod && <p role="status">Por ahora no hay métodos de entrega disponibles.</p>}
+                  {chosenMethod?.carrier === 'olva' && (
+                    <label className="field">Zona de envío Olva
+                      <select value={chosenMethod.id} onChange={(e) => { setDeliveryMethod(e.target.value); setTermsAccepted(false); }}>
+                        {activeMethods.filter((method) => method.carrier === 'olva').map((method) => (
+                          <option key={method.id} value={method.id}>{method.id === 'olva_lima' ? 'Lima y Callao' : 'Provincia'} · {formatMoney(method.baseFee)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {chosenMethod?.description && <small>{chosenMethod.description}</small>}
+                  {chosenMethod && !isPickup && (
+                    <div className="pipo-shipping-fields">
+                      {chosenMethod.requiresDni && <label className="field">DNI del destinatario
+                        <input inputMode="numeric" pattern="[0-9]{8}" maxLength={8} required value={recipientDni}
+                          onChange={(e) => setRecipientDni(e.target.value.replace(/[^0-9]/g, ''))} />
+                      </label>}
+                      <label className="field">{chosenMethod.carrier === 'shalom' ? 'Ciudad / agencia de destino' : 'Región / provincia / distrito'}
+                        <input required value={destinationRegion} onChange={(e) => setDestinationRegion(e.target.value)} />
+                      </label>
+                      {chosenMethod.requiresAddress && <label className="field">Dirección y referencia
+                        <input required value={destinationAddress} onChange={(e) => setDestinationAddress(e.target.value)} />
+                      </label>}
+                    </div>
+                  )}
+                  {isPickup && <>
                   {/* Delivery Point Selection */}
                   <div className="field">
                     <label>
-                      <MapPin size={14} style={{ marginRight: 4 }} /> Elige tu Punto de Entrega (No realizamos envíos a domicilio) *
+                      <MapPin size={14} style={{ marginRight: 4 }} /> Elige tu punto de entrega *
                     </label>
                     <div className="pipo-checkout-points-grid">
                       {(catalog.deliveryPoints || []).map((pt) => {
@@ -2001,10 +2161,42 @@ export default function StorefrontView({
                       </div>
                     ) : (
                       <div className="badge badge-brand" style={{ padding: '10px 12px' }}>
-                        Horario flexible a coordinar directamente por WhatsApp tras confirmar tu pedido.
+                        Este punto no tiene horarios disponibles. Elige otro punto o método de entrega.
                       </div>
                     )}
                   </div>
+
+                  </>}
+                  <fieldset className="pipo-shipping-fieldset">
+                    <legend>Plan de pago</legend>
+                    <div className="pipo-shipping-fields">
+                      {[['full', 'Pago completo'], ['advance_50', 'Separación 50%']].map(([value, label]) => (
+                        <label className="pipo-shipping-choice" key={value}>
+                          <input type="radio" name="payment-plan" checked={paymentPlan === value}
+                            onChange={() => { setPaymentPlan(value); setTermsAccepted(false); }} />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {paymentPlan === 'advance_50' && (
+                    <div className="pipo-separation-note">
+                      <p>Guardamos el stock {RESERVATION_HOLD_MINUTES} minutos mientras validamos el Yape. Liquida el saldo hasta 24 horas después del turno acordado.</p>
+                      <p>Si no recoges tu pedido, el reembolso descuenta {isPickup
+                        ? `${UNAC_RETENTION_RATE * 100}% del adelanto (mínimo ${formatMoney(UNAC_MIN_RETENTION)})`
+                        : 'el costo real de envío y embalaje de ida y vuelta'}, hasta el monto pagado.</p>
+                      <label className="pipo-shipping-choice"><input type="checkbox" required checked={termsAccepted}
+                        onChange={(e) => setTermsAccepted(e.target.checked)} /><span>Acepto las condiciones de separación</span></label>
+                    </div>
+                  )}
+                  <dl className="pipo-order-totals">
+                    <div><dt>Subtotal productos</dt><dd>{formatMoney(cartSummary.subtotal)}</dd></div>
+                    <div><dt>Envío</dt><dd>{collectShipping ? (shippingFee ? `Pago en destino + ${formatMoney(shippingFee)} de tarifa base` : 'Pago en destino') : formatMoney(shippingFee)}</dd></div>
+                    <div><dt>Monto a Yapear ahora</dt><dd><strong>{formatMoney(policy.expectedInitialPayment)}</strong></dd></div>
+                    <div><dt>Saldo restante</dt><dd>{formatMoney(policy.balanceAfterAdvance)}</dd></div>
+                  </dl>
+                  {paymentPlan === 'advance_50' && Number(chosenMethod?.minAdvanceAmount) > 0 &&
+                    <small>Adelanto de 50% o mínimo de {formatMoney(chosenMethod.minAdvanceAmount)}, sin superar el total.</small>}
 
                   <div className="field">
                     <label>Nota adicional (Opcional)</label>
@@ -2033,12 +2225,12 @@ export default function StorefrontView({
                     <button
                       type="submit"
                       className="btn btn-primary"
-                      disabled={submittingOrder}
+                      disabled={submittingOrder || !chosenMethod || (isPickup && !availableSlotsForPoint.length) || (paymentPlan === 'advance_50' && !termsAccepted)}
                     >
                       <ShieldCheck size={17} />
                       {submittingOrder
                         ? 'Reservando tu pedido...'
-                        : `Pasar al Pago Yape (${formatMoney(cartSummary.subtotal)}) →`}
+                        : `Pasar al Pago Yape (${formatMoney(policy.expectedInitialPayment)}) →`}
                     </button>
                   </div>
                 </form>
@@ -2065,8 +2257,13 @@ export default function StorefrontView({
                     </div>
 
                     <div className="pipo-yape-amount-display">
-                      {formatMoney(activeOrder.totalCharged)}
+                      {formatMoney(paymentToday)}
                     </div>
+                    {secondsRemaining !== null && (
+                      <p role="timer" className="pipo-reservation-timer">
+                        Tiempo para pagar <strong>{Math.floor(secondsRemaining / 60)}:{String(secondsRemaining % 60).padStart(2, '0')}</strong>
+                      </p>
+                    )}
                     <p className="pipo-yape-holder-hint">
                       Yapea el monto exacto desde la cuenta de{' '}
                       <span className="pipo-yape-holder-pill">
@@ -2136,7 +2333,7 @@ export default function StorefrontView({
                     <a
                       href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
                         `¡Hola Glow with Pipo! 🌸 Acabo de registrar mi pedido web *${activeOrder.code}* por *${formatMoney(
-                          activeOrder.totalCharged
+                          activeOrder.amountPaid ?? paymentToday
                         )}*.\n\n👤 Cliente: ${customerName}\n💜 Titular Yape: ${
                           activeOrder.yapeHolderName
                         }\n📍 Punto de entrega: ${activeOrder.deliveryLocation}\n🕒 Horario: ${
@@ -2151,6 +2348,13 @@ export default function StorefrontView({
                       <MessageCircle size={16} /> Avisar por WhatsApp
                     </a>
                   </div>
+                </div>
+              )}
+
+              {checkoutStep === 'expired' && (
+                <div className="modal-body">
+                  <p role="status">La reserva temporal expiró. Si ya transferiste, avísanos antes de volver a pagar.</p>
+                  <button type="button" className="btn btn-primary" onClick={() => setCheckoutOpen(false)}>Volver al catálogo</button>
                 </div>
               )}
 
@@ -2172,10 +2376,12 @@ export default function StorefrontView({
                     <CheckCircle2 size={36} />
                   </div>
                   <h3 style={{ margin: '0 0 6px', fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--pipo-burgundy)' }}>
-                    ¡Pago Yape Verificado con Éxito! 🎀
+                    {isSeparated ? 'Separación confirmada' : '¡Pago Yape Verificado con Éxito! 🎀'}
                   </h3>
                   <p style={{ margin: '0 auto 16px', maxWidth: 440, color: 'var(--pipo-cocoa)', fontSize: '0.9rem' }}>
-                    Tu pedido <strong>{activeOrder.code}</strong> ya está registrado y pagado en el sistema de Adrián y Fabiana.
+                    Tu pedido <strong>{activeOrder.code}</strong> {isSeparated
+                      ? `tiene un saldo de ${formatMoney(activeOrder.balanceDue)} pendiente. Liquídalo antes del recojo${activeOrder.deliveryMethod === 'shalom_agency' ? ' o de recibir la clave Shalom' : ''}.`
+                      : 'ya está registrado y pagado.'}
                   </p>
 
                   <div
@@ -2193,7 +2399,7 @@ export default function StorefrontView({
                       <strong>Código de Pedido:</strong> {activeOrder.code}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <strong>Monto Pagado:</strong> {formatMoney(activeOrder.totalCharged)}
+                      <strong>Monto Pagado:</strong> {formatMoney(activeOrder.amountPaid ?? paymentToday)}
                       <span className="badge badge-ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <img
                           src={`${import.meta.env.BASE_URL}yape-logo.png`}
@@ -2206,16 +2412,16 @@ export default function StorefrontView({
                     <div>
                       <strong>Punto de Entrega:</strong> {activeOrder.deliveryLocation}
                     </div>
-                    <div>
-                      <strong>Horario Programado:</strong> {activeOrder.deliveryTime}
-                    </div>
+                    {activeOrder.deliveryTime && <div>
+                      <strong>Horario programado:</strong> {activeOrder.deliveryTime}
+                    </div>}
                   </div>
 
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                     <a
                       href={`https://wa.me/51${cleanYapeDigits}?text=${encodeURIComponent(
                         `¡Hola Glow with Pipo! 🎀 Mi pago Yape del pedido *${activeOrder.code}* (${formatMoney(
-                          activeOrder.totalCharged
+                          activeOrder.amountPaid ?? paymentToday
                         )}) ya fue verificado en la web. ¡Nos vemos en ${activeOrder.deliveryLocation}!`
                       )}`}
                       target="_blank"
@@ -2242,7 +2448,7 @@ export default function StorefrontView({
           document.body
         )}
 
-      <ProductDetailModal {...{ StorefrontProductImage, closeProductDetail, detailActiveShadeId, detailProduct, detailQty, detailShadeViewMode, getCategoryEmoji, handleAddDetailProductToCart, setDetailActiveShadeId, setDetailQty, setDetailShadeViewMode, setSelectedVariantByProduct }} />
+      <ProductDetailModal {...{ StorefrontProductImage, closeProductDetail, detailActiveShadeId, detailProduct: productsById.get(detailProduct?.id) || detailProduct, detailQty, detailShadeViewMode, getCategoryEmoji, handleAddDetailProductToCart, setDetailActiveShadeId, setDetailQty, setDetailShadeViewMode, setSelectedVariantByProduct }} />
       <ComboDetailModal {...{ StorefrontProductImage, closeComboDetail, detailCombo, detailComboMaxQty, detailComboShadeChoices, detailQty, handleAddDetailComboToCart, setDetailComboShadeChoices, setDetailQty }} />
     </div>
   );

@@ -14,6 +14,12 @@ import {
 import { computeDashboardMetrics } from './domain/calculations.js';
 import {
   applyAddCategory,
+  applyCancelSaleWithPartialRefund,
+  applySaveShippingMethod,
+  applyUpdateSaleCarrierDispatch,
+  cancelSaleWithPartialRefund,
+  cloudSaveShippingMethod,
+  updateSaleCarrierDispatch,
   applyAddSalePayment,
   applyCreateOrUpdateCombo,
   applyCreateOrUpdateCustomer,
@@ -462,22 +468,25 @@ export default function App() {
   }, [session, metrics.pendingDeliveries]);
 
   // Unified mutation pipeline: optimistic local update + immediate direct cloud write
-  async function commitMutation({ optimisticFn, cloudFn, successMsg }) {
+  async function commitMutation({ optimisticFn, cloudFn, successMsg, waitForCloud = false }) {
     if (isProtectedMode) {
       notify('⚠️ Edición bloqueada: La aplicación está en Modo Protección sin conexión a Supabase.', true);
-      return;
+      return false;
     }
+    const usesCloud = session?.mode === 'supabase' && getSupabaseConfig();
     let nextDb;
     try {
-      nextDb = optimisticFn(db);
-      setDb(nextDb);
-      saveLocalDb(nextDb);
+      if (!waitForCloud || !usesCloud) {
+        nextDb = optimisticFn(db);
+        setDb(nextDb);
+        saveLocalDb(nextDb);
+      }
     } catch (localErr) {
       notify(localErr.message || 'Error de validación local.', true);
-      return;
+      return false;
     }
 
-    if (session?.mode === 'supabase' && getSupabaseConfig()) {
+    if (usesCloud) {
       setIsSyncing(true);
       try {
         const cloudDb = await cloudFn(db);
@@ -492,7 +501,7 @@ export default function App() {
           setUnauthView('login');
           setSessionExpiredNotice(true);
           notify('Tu sesión ha expirado por seguridad. Por favor ingresa nuevamente.', true);
-          return;
+          return false;
         }
         // Rollback on server error by pulling fresh server state
         try {
@@ -503,12 +512,14 @@ export default function App() {
           // Keep offline state
         }
         notify(cloudErr.message || 'Error al guardar en Supabase.', true);
+        return false;
       } finally {
         setIsSyncing(false);
       }
     } else {
       if (successMsg) notify(successMsg);
     }
+    return true;
   }
 
   async function handleConfirmWebOrderManual(saleId) {
@@ -870,6 +881,18 @@ export default function App() {
             <SalesView
               db={db}
               currentUser={session}
+              onUpdateCarrierDispatch={(saleId, payload) => commitMutation({
+                optimisticFn: (current) => applyUpdateSaleCarrierDispatch(current, { ...payload, saleId }),
+                cloudFn: async () => (await updateSaleCarrierDispatch(saleId, payload)).db,
+                successMsg: 'Despacho actualizado.',
+                waitForCloud: true
+              })}
+              onCancelSalePartialRefund={(saleId, payload) => commitMutation({
+                optimisticFn: (current) => applyCancelSaleWithPartialRefund(current, { ...payload, saleId }),
+                cloudFn: async () => (await cancelSaleWithPartialRefund(saleId, payload)).db,
+                successMsg: 'Cancelación y reembolso registrados.',
+                waitForCloud: true
+              })}
               onCreateSale={(payload) =>
                 commitMutation({
                   optimisticFn: (cur) => applyCreateSale(cur, payload),
@@ -929,6 +952,12 @@ export default function App() {
 
           {activeTab === 'storefront' && (
             <StorefrontAdminView
+              onSaveShippingMethod={(payload) => commitMutation({
+                optimisticFn: (current) => applySaveShippingMethod(current, payload),
+                cloudFn: (current) => cloudSaveShippingMethod(current, payload),
+                successMsg: 'Método de entrega actualizado.',
+                waitForCloud: true
+              })}
               onConfirmWebOrderManual={handleConfirmWebOrderManual}
               db={db}
               onSaveDeliveryPoint={(payload) =>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   CheckCircle2,
@@ -19,6 +19,7 @@ import {
 import {
   computeMargins,
   computeSaleTotals,
+  computeSeparationPolicy,
   formatCurrency,
   formatSaleWhatsAppTicket,
   formatUnitCost,
@@ -27,7 +28,10 @@ import {
   roundMoney,
   toNumber
 } from '../../domain/calculations.js';
-import { PAYMENT_METHODS, SALE_STATUSES, SOCIAL_PLATFORMS } from '../../domain/constants.js';
+import {
+  DEFAULT_SHIPPING_METHODS, FULFILLMENT_STAGES, PAYMENT_METHODS,
+  SALE_STATUSES, SOCIAL_PLATFORMS, UNAC_MIN_RETENTION, UNAC_RETENTION_RATE
+} from '../../domain/constants.js';
 
 function cleanWa(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -65,10 +69,120 @@ function getQuickRoundOptions(price) {
   return Array.from(map.values());
 }
 
+function OrderActionDialog({ sale, action, onClose, onSave }) {
+  const ref = useRef(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const paid = Number(sale.amountPaid || 0);
+  const isShalom = sale.deliveryMethod === 'shalom_agency';
+  const isPickup = !sale.deliveryMethod || sale.deliveryMethod === 'unac_pickup';
+  const refund = action === 'refund';
+  const suggested = isPickup
+    ? Math.min(paid, Math.max(UNAC_MIN_RETENTION, roundMoney(paid * UNAC_RETENTION_RATE)))
+    : 0;
+  const [retainedFee, setRetainedFee] = useState(String(suggested));
+  const [refundAmount, setRefundAmount] = useState(String(roundMoney(paid - suggested)));
+  useEffect(() => {
+    const dialog = ref.current;
+    dialog.showModal();
+    return () => dialog.close();
+  }, []);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (pending) return;
+    setError('');
+    const data = new FormData(event.currentTarget);
+    let payload;
+    if (refund) {
+      const reasonNote = String(data.get('reason')).trim();
+      const refundMethod = String(data.get('method'));
+      const refundValue = roundMoney(Number(refundAmount));
+      const retention = roundMoney(Number(retainedFee));
+      if (!reasonNote || !['yape', 'plin', 'cash', 'transfer'].includes(refundMethod)
+        || !Number.isFinite(refundValue) || !Number.isFinite(retention)
+        || refundValue < 0 || retention < 0 || roundMoney(refundValue + retention) > paid) {
+        setError('Completa el motivo y el método. La devolución y la retención no pueden superar lo pagado.');
+        return;
+      }
+      payload = { reasonNote, refundMethod, refundAmount: refundValue, retainedFee: retention };
+    } else {
+      payload = {
+        fulfillmentStage: String(data.get('stage')),
+        carrierTrackingCode: String(data.get('tracking')).trim(),
+        carrierSecurityCode: isShalom ? String(data.get('security')).trim() : ''
+      };
+    }
+    setPending(true);
+    try {
+      if (await onSave(sale.id, payload) === false) setError('No se pudo guardar. Revisa el aviso del sistema.');
+      else onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <dialog ref={ref} className="modal-panel pipo-order-dialog" aria-labelledby="pipo-order-action-title"
+      onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}>
+      <form onSubmit={submit} className="pipo-shipping-edit">
+        <h2 className="card-title" id="pipo-order-action-title">{refund ? 'Cancelar y reembolsar parcialmente' : 'Despacho y courier'} · {sale.code}</h2>
+        {refund ? <>
+          <p>Pagado {formatCurrency(paid)}. {isPickup ? 'Retención sugerida de 20%, mínimo S/ 5, hasta el monto pagado.' : 'Ingresa el costo real del envío y embalaje que corresponda retener.'}</p>
+          <div className="pipo-shipping-fields">
+            <label className="field">Retención (S/)
+              <input type="number" min="0" max={paid} step="0.01" required value={retainedFee}
+                onChange={(e) => { setRetainedFee(e.target.value); setRefundAmount(String(roundMoney(Math.max(0, paid - Number(e.target.value))))); }} />
+            </label>
+            <label className="field">Devolución (S/)
+              <input type="number" min="0" max={paid} step="0.01" required value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} />
+            </label>
+          </div>
+          <label className="field">Método de devolución
+            <select name="method" required defaultValue="">
+              <option value="" disabled>Selecciona un método</option>
+              {PAYMENT_METHODS.filter((method) => ['yape', 'plin', 'cash', 'transfer'].includes(method.id)).map((method) => (
+                <option key={method.id} value={method.id}>{method.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">Motivo de cancelación<textarea name="reason" required rows={2} /></label>
+          <small>Registra la devolución que realizaste por el método seleccionado.</small>
+        </> : <>
+          <label className="field">Etapa logística
+            <select name="stage" defaultValue={sale.fulfillmentStage || 'pending_pack'}>
+              {Object.entries(FULFILLMENT_STAGES).map(([stage, info]) => <option key={stage} value={stage}>{info.label}</option>)}
+            </select>
+          </label>
+          <label className="field">Código de seguimiento / guía<input name="tracking" defaultValue={sale.carrierTrackingCode || ''} /></label>
+          {isShalom && <>
+            <label className="field">Clave Shalom (4 dígitos)
+              <input name="security" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4}
+                autoComplete="off" defaultValue={sale.carrierSecurityCode || ''} />
+            </label>
+            <small>{Number(sale.balanceDue) > 0 ? '🔒 La clave queda oculta en el ticket de WhatsApp mientras haya un saldo pendiente.' : 'El ticket de WhatsApp puede incluir la clave porque el saldo está liquidado.'}</small>
+          </>}
+        </>}
+        {error && <p role="alert" className="badge badge-danger">{error}</p>}
+        <div className="modal-footer">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={pending}>Volver</button>
+          <button type="submit" className={refund ? 'btn btn-danger' : 'btn btn-primary'} disabled={pending}>
+            {pending ? 'Guardando…' : refund ? 'Registrar cancelación y reembolso' : 'Guardar despacho'}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
 export default function SalesView({
   db,
   currentUser,
   onCreateSale,
+  onUpdateCarrierDispatch,
+  onCancelSalePartialRefund,
   onAddPayment,
   onUpdateSalePrice,
   onChangeSaleStatus,
@@ -78,6 +192,14 @@ export default function SalesView({
 }) {
   const [subTab, setSubTab] = useState('new_sale'); // new_sale | orders | customers
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [orderAction, setOrderAction] = useState(null);
+  const [orderClock, setOrderClock] = useState(Date.now);
+  useEffect(() => {
+    if (subTab !== 'orders') return;
+    setOrderClock(Date.now());
+    const timer = setInterval(() => setOrderClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [subTab]);
 
   // Sale Creation State
   const [saleDate, setSaleDate] = useState(new Date().toISOString().slice(0, 10));
@@ -101,6 +223,16 @@ export default function SalesView({
   const [deliveryDate, setDeliveryDate] = useState('');
   const [deliveryTime, setDeliveryTime] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
+  const [deliveryMethod, setDeliveryMethod] = useState('unac_pickup');
+  const [paymentPlan, setPaymentPlan] = useState('full');
+  const [recipientDni, setRecipientDni] = useState('');
+  const [destinationRegion, setDestinationRegion] = useState('');
+  const [destinationAddress, setDestinationAddress] = useState('');
+  const [posError, setPosError] = useState('');
+  const [isSubmittingSale, setIsSubmittingSale] = useState(false);
+  const shippingMethods = db.shippingMethods?.length ? db.shippingMethods : DEFAULT_SHIPPING_METHODS;
+  const method = shippingMethods.find((item) => item.id === deliveryMethod) || DEFAULT_SHIPPING_METHODS[0];
+  const isPickup = method.id === 'unac_pickup';
   const [shippingCharged, setShippingCharged] = useState('0');
   const [shippingCost, setShippingCost] = useState('');
   const [ticketFeedback, setTicketFeedback] = useState(null);
@@ -128,6 +260,7 @@ export default function SalesView({
   const [dirCode, setDirCode] = useState('');
   const [dirName, setDirName] = useState('');
   const [dirWa, setDirWa] = useState('');
+  const [dirDni, setDirDni] = useState('');
   const [dirSocial, setDirSocial] = useState('instagram');
   const [dirHandle, setDirHandle] = useState('');
   const [dirNotes, setDirNotes] = useState('');
@@ -294,9 +427,29 @@ export default function SalesView({
     });
   }, [cartItems, suppliesUsedArray, shippingCharged, shippingCost, customFinalTotal, initialPaid]);
 
+  const separation = computeSeparationPolicy({ totalCharged: liveTotals.totalCharged,
+    deliveryMethod, shippingMethods, paymentPlan });
+
   async function handleSubmitSale(e) {
     e.preventDefault();
-    if (cartItems.length === 0) return;
+    setPosError('');
+    if (cartItems.length === 0 || isSubmittingSale) return;
+    if (method.active === false) {
+      setPosError('Elige un método de entrega disponible.');
+      return;
+    }
+    if ((method.requiresDni && !/^[0-9]{8}$/.test(recipientDni))
+      || (!isPickup && !destinationRegion.trim())
+      || (method.requiresAddress && !destinationAddress.trim())) {
+      setPosError('Completa el DNI y los datos de destino requeridos.');
+      return;
+    }
+    const received = toNumber(initialPaid, 0);
+    if (paymentPlan === 'advance_50' && received > 0 && received < separation.expectedInitialPayment) {
+      setPosError('El pago registrado no alcanza el adelanto mínimo.');
+      return;
+    }
+    const deliveryInstant = deliveryDate ? Date.parse(`${deliveryDate}T${deliveryTime || '00:00'}:00-05:00`) : NaN;
 
     const payload = {
       saleDate,
@@ -313,7 +466,17 @@ export default function SalesView({
           : null,
       deliveryDate,
       deliveryTime,
-      deliveryLocation,
+      deliveryLocation: isPickup ? deliveryLocation : destinationRegion.trim(),
+      deliveryMethod,
+      shippingPaymentMode: method.shippingPaymentMode,
+      recipientDni: method.requiresDni ? recipientDni : '',
+      destinationRegion: isPickup ? '' : destinationRegion.trim(),
+      destinationAddress: method.requiresAddress ? destinationAddress.trim() : '',
+      paymentPlan,
+      expectedInitialPayment: separation.expectedInitialPayment,
+      separationDueAt: paymentPlan === 'advance_50' && Number.isFinite(deliveryInstant)
+        ? new Date(deliveryInstant + 86400000).toISOString() : null,
+      fulfillmentStage: saleStatus === 'delivered' ? 'delivered' : 'pending_pack',
       shippingCharged: toNumber(shippingCharged, 0),
       shippingCost: shippingCost === '' ? toNumber(shippingCharged, 0) : toNumber(shippingCost, 0),
       customTotalCharged: customFinalTotal !== '' ? toNumber(customFinalTotal, liveTotals.totalCharged) : null,
@@ -322,14 +485,27 @@ export default function SalesView({
       initialPaymentConcept:
         toNumber(initialPaid, 0) >= liveTotals.totalCharged && liveTotals.totalCharged > 0
           ? 'full_payment'
-          : 'shipping_advance',
+          : paymentPlan === 'advance_50' ? 'order_advance' : 'shipping_advance',
       notes: saleNotes,
       createdBy: currentUser?.name || '',
       items: cartItems,
       suppliesUsed: suppliesUsedArray
     };
 
-    await onCreateSale(payload);
+    setIsSubmittingSale(true);
+    try {
+      if (await onCreateSale(payload) === false) return;
+    } catch (err) {
+      setPosError(err.message || 'No se pudo registrar la venta.');
+      return;
+    } finally {
+      setIsSubmittingSale(false);
+    }
+    setDeliveryMethod('unac_pickup');
+    setPaymentPlan('full');
+    setRecipientDni('');
+    setDestinationRegion('');
+    setDestinationAddress('');
 
     // Reset cart
     setCartItems([]);
@@ -350,6 +526,10 @@ export default function SalesView({
 
   const filteredSales = useMemo(() => {
     if (statusFilter === 'ALL') return db.sales;
+    if (statusFilter === 'DISPATCH') {
+      return db.sales.filter((sale) => sale.status === 'pending_delivery' && sale.deliveryMethod
+        && sale.deliveryMethod !== 'unac_pickup' && sale.fulfillmentStage !== 'delivered');
+    }
     if (statusFilter === 'UNPAID') {
       return db.sales.filter((s) => s.status !== 'cancelled' && s.balanceDue > 0);
     }
@@ -359,19 +539,21 @@ export default function SalesView({
   async function handleSaveDirectoryCustomer(e) {
     e.preventDefault();
     if (!dirName.trim()) return;
-    await onSaveCustomer({
+    if (await onSaveCustomer({
       id: dirId,
       code: dirCode,
       name: dirName,
       whatsapp: dirWa,
+      dni: dirDni,
       socialPlatform: dirSocial,
       socialHandle: dirHandle,
       notes: dirNotes
-    });
+    }) === false) return;
     setDirId(null);
     setDirCode('');
     setDirName('');
     setDirWa('');
+    setDirDni('');
     setDirHandle('');
     setDirNotes('');
   }
@@ -447,7 +629,10 @@ export default function SalesView({
                   <select
                     required
                     value={selectedCustomerId}
-                    onChange={(e) => setSelectedCustomerId(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedCustomerId(e.target.value);
+                      setRecipientDni(db.customers.find((item) => item.id === e.target.value)?.dni || '');
+                    }}
                   >
                     <option value="">Elegir cliente...</option>
                     {db.customers.map((c) => (
@@ -933,6 +1118,42 @@ export default function SalesView({
                 )}
               </div>
 
+              <div className="pipo-shipping-fields">
+                <label className="field">Método de entrega
+                  <select value={deliveryMethod} onChange={(e) => {
+                    const next = shippingMethods.find((item) => item.id === e.target.value);
+                    setDeliveryMethod(e.target.value);
+                    setShippingCharged(String(next?.shippingPaymentMode === 'prepaid_to_pipo' ? next.baseFee : 0));
+                    setShippingCost('');
+                    setDestinationRegion('');
+                    setDestinationAddress('');
+                    setRecipientDni(customerMode === 'existing' ? db.customers.find((item) => item.id === selectedCustomerId)?.dni || '' : '');
+                  }}>
+                    {shippingMethods.filter((item) => item.active !== false || item.id === deliveryMethod).map((item) => (
+                      <option key={item.id} value={item.id} disabled={item.active === false}>{item.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">Plan de pago
+                  <select value={paymentPlan} onChange={(e) => setPaymentPlan(e.target.value)}>
+                    <option value="full">Pago completo</option><option value="advance_50">Separación 50%</option>
+                  </select>
+                </label>
+                {method.requiresDni && <label className="field">DNI del destinatario
+                  <input required inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={recipientDni}
+                    onChange={(e) => setRecipientDni(e.target.value.replace(/[^0-9]/g, ''))} />
+                </label>}
+                {!isPickup && <label className="field">{method.carrier === 'shalom' ? 'Ciudad / agencia de destino' : 'Región / provincia / distrito'}
+                  <input required value={destinationRegion} onChange={(e) => setDestinationRegion(e.target.value)} />
+                </label>}
+                {method.requiresAddress && <label className="field">Dirección y referencia
+                  <input required value={destinationAddress} onChange={(e) => setDestinationAddress(e.target.value)} />
+                </label>}
+              </div>
+              {paymentPlan === 'advance_50' && <p className="pipo-separation-note">
+                Adelanto esperado {formatCurrency(separation.expectedInitialPayment)} · Saldo tras el adelanto {formatCurrency(separation.balanceAfterAdvance)}.
+              </p>}
+              {posError && <p className="badge badge-danger" role="alert">{posError}</p>}
               <div className="form-grid">
                 <div className="field">
                   <label>Estado del pedido</label>
@@ -992,7 +1213,7 @@ export default function SalesView({
                   <input
                     type="number"
                     min="0"
-                    step="0.5"
+                    step="0.01"
                     value={shippingCharged}
                     onChange={(e) => setShippingCharged(e.target.value)}
                   />
@@ -1037,9 +1258,9 @@ export default function SalesView({
                       type="button"
                       className="btn btn-ghost btn-sm"
                       style={{ padding: '2px 7px', fontSize: '0.72rem' }}
-                      onClick={() => setInitialPaid(String(toNumber(shippingCharged, 0)))}
+                      onClick={() => setInitialPaid(String(paymentPlan === 'advance_50' ? separation.expectedInitialPayment : toNumber(shippingCharged, 0)))}
                     >
-                      Pagó envío
+                      {paymentPlan === 'advance_50' ? 'Pagó el adelanto' : 'Pagó envío'}
                     </button>
                     <button
                       type="button"
@@ -1250,10 +1471,10 @@ export default function SalesView({
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={cartItems.length === 0}
+                disabled={cartItems.length === 0 || isSubmittingSale}
                 style={{ width: '100%', marginTop: 12, padding: '12px 18px', fontSize: '0.96rem' }}
               >
-                Confirmar y Guardar Pedido / Venta
+                {isSubmittingSale ? 'Guardando…' : 'Confirmar y Guardar Pedido / Venta'}
               </button>
             </div>
           </div>
@@ -1271,6 +1492,8 @@ export default function SalesView({
             >
               Todas ({db.sales.length})
             </button>
+            <button type="button" className={`tab-chip ${statusFilter === 'DISPATCH' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('DISPATCH')}>Cola de despacho</button>
             <button
               type="button"
               className={`tab-chip ${statusFilter === 'pending_delivery' ? 'active' : ''}`}
@@ -1308,6 +1531,13 @@ export default function SalesView({
               {filteredSales.map((sale) => {
                 const cust = customersMap.get(sale.customerId);
                 const statusInfo = SALE_STATUSES[sale.status] || SALE_STATUSES.pending_delivery;
+                const courier = shippingMethods.find((item) => item.id === sale.deliveryMethod);
+                const stage = FULFILLMENT_STAGES[sale.fulfillmentStage || (sale.status === 'delivered' ? 'delivered' : 'pending_pack')];
+                const reserveUntil = Date.parse(sale.reservationExpiresAt || '');
+                const reservationMinutes = Math.max(0, Math.ceil((reserveUntil - orderClock) / 60000));
+                const temporarilyReserved = sale.status === 'pending_delivery' && Number(sale.amountPaid || 0) === 0 && Number.isFinite(reserveUntil);
+                const separationDeadline = sale.status !== 'cancelled' && sale.paymentPlan === 'advance_50' && Number(sale.balanceDue) > 0 && sale.separationDueAt;
+
                 const wa = cleanWa(cust?.whatsapp);
 
                 return (
@@ -1327,6 +1557,13 @@ export default function SalesView({
                           Cliente: <strong>{cust?.name || 'Cliente'}</strong> ({cust?.code}) ·{' '}
                           <span style={{ textTransform: 'capitalize' }}>{cust?.socialPlatform}</span>
                           {cust?.socialHandle ? ` (${cust.socialHandle})` : ''}
+                        </div>
+                        <div className="pipo-reservation-badges">
+                          <span className="badge badge-brand">{courier?.name || 'UNAC / recojo'}</span>
+                          <span className="badge badge-brand">{sale.paymentPlan === 'advance_50' ? 'Separación 50%' : 'Pago completo'}</span>
+                          {stage && sale.status !== 'cancelled' && <span className={`badge ${stage.badgeClass}`}>{stage.label}</span>}
+                          {temporarilyReserved && <span className="badge badge-warning">{reservationMinutes ? `Reserva temporal · ${reservationMinutes} min` : 'Reserva temporal vencida'}</span>}
+                          {separationDeadline && <span className="badge badge-warning">Liquidar hasta {new Date(separationDeadline).toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'short', timeStyle: 'short' })}</span>}
                         </div>
                         {(sale.deliveryDate || sale.deliveryLocation) && (
                           <div style={{ marginTop: 4, fontSize: '0.83rem', color: 'var(--pipo-cocoa)', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1495,7 +1732,17 @@ export default function SalesView({
                         </button>
                       )}
 
-                      {sale.status !== 'cancelled' && (
+                      {sale.status !== 'cancelled' && onUpdateCarrierDispatch && (
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setOrderAction({ sale, action: 'dispatch' })}>
+                          Despacho y courier
+                        </button>
+                      )}
+                      {sale.status !== 'cancelled' && Number(sale.amountPaid) > 0 && onCancelSalePartialRefund && (
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => setOrderAction({ sale, action: 'refund' })}>
+                          Cancelar y reembolsar parcialmente
+                        </button>
+                      )}
+                      {sale.status !== 'cancelled' && !(Number(sale.amountPaid) > 0 && onCancelSalePartialRefund) && (
                         <button
                           type="button"
                           className="btn btn-danger btn-sm"
@@ -1570,6 +1817,10 @@ export default function SalesView({
                     onChange={(e) => setDirWa(e.target.value)}
                   />
                 </div>
+                <label className="field">DNI (opcional)
+                  <input inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={dirDni}
+                    onChange={(e) => setDirDni(e.target.value.replace(/[^0-9]/g, ''))} />
+                </label>
                 <div className="field">
                   <label>Red Social</label>
                   <select value={dirSocial} onChange={(e) => setDirSocial(e.target.value)}>
@@ -1614,6 +1865,7 @@ export default function SalesView({
                       setDirCode('');
                       setDirName('');
                       setDirWa('');
+                      setDirDni('');
                       setDirHandle('');
                       setDirNotes('');
                     }}
@@ -1686,6 +1938,7 @@ export default function SalesView({
                                   setDirCode(c.code);
                                   setDirName(c.name);
                                   setDirWa(c.whatsapp);
+                                  setDirDni(c.dni || '');
                                   setDirSocial(c.socialPlatform || 'instagram');
                                   setDirHandle(c.socialHandle || '');
                                   setDirNotes(c.notes || '');
@@ -1956,6 +2209,8 @@ export default function SalesView({
           </div>
         </div>
       )}
+      {orderAction && <OrderActionDialog {...orderAction} onClose={() => setOrderAction(null)}
+        onSave={orderAction.action === 'refund' ? onCancelSalePartialRefund : onUpdateCarrierDispatch} />}
     </div>
   );
 }

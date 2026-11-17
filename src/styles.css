@@ -3808,3 +3808,47 @@ html:has(.pipo-storefront), body:has(.pipo-storefront) { overflow-x: clip; }
 .pipo-discovery-option[data-active="true"] { background: var(--pipo-blush, #ecd0c4); }
 .pipo-discovery-option[aria-selected="true"] { background: var(--pipo-burgundy); color: #fffdf9; font-weight: 700; }
 .pipo-discovery-option[data-active="true"] { outline: 2px solid var(--pipo-burgundy); outline-offset: -2px; }
+
+/* Entrega, separación y despacho */
+.pipo-shipping-fieldset { border: 0; margin: 0; min-inline-size: 0; padding: 0; }
+.pipo-shipping-fieldset > legend { margin-bottom: 8px; color: var(--pipo-burgundy); font-weight: 800; }
+.pipo-shipping-grid, .pipo-shipping-fields { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pipo-shipping-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pipo-shipping-fields > *, .pipo-shipping-choice > span { min-width: 0; overflow-wrap: anywhere; }
+.pipo-shipping-choice {
+  display: flex; align-items: center; gap: 9px; box-sizing: border-box; min-height: 44px;
+  padding: 9px 12px; border: 1px solid var(--pipo-border); border-radius: 12px;
+  background: var(--pipo-surface); color: var(--pipo-burgundy); cursor: pointer;
+}
+.pipo-shipping-choice:has(input:checked) { background: var(--pipo-ivory); border-color: var(--pipo-burgundy); }
+.pipo-shipping-choice:focus-within { outline: 2px solid var(--pipo-burgundy); outline-offset: 2px; }
+.pipo-shipping-choice input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--pipo-burgundy); }
+.pipo-shipping-choice small { display: block; color: var(--pipo-muted); }
+.pipo-separation-note, .pipo-order-totals {
+  margin: 0; padding: 12px; background: var(--pipo-ivory);
+  border: 1px solid var(--pipo-border); border-radius: 12px; overflow-wrap: anywhere;
+}
+.pipo-separation-note p { margin: 0 0 8px; }
+.pipo-order-totals > div { display: flex; justify-content: space-between; gap: 8px; }
+.pipo-order-totals > div + div { margin-top: 6px; }
+.pipo-order-totals dd { margin: 0; text-align: end; }
+.pipo-order-totals strong { color: var(--pipo-burgundy); }
+.pipo-reservation-timer { margin: 8px 0; font-variant-numeric: tabular-nums; }
+.pipo-reservation-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.pipo-reservation-badges .badge { white-space: normal; overflow-wrap: anywhere; }
+.pipo-shipping-edit { display: grid; gap: 12px; min-width: 0; }
+.pipo-shipping-edit .card-title { margin: 0; overflow-wrap: anywhere; }
+.pipo-shipping-edit textarea, .pipo-shipping-fields :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; }
+.pipo-order-dialog {
+  position: fixed; inset: 0; margin: auto; box-sizing: border-box; color: var(--pipo-espresso);
+  width: min(540px, calc(100% - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
+  padding: 18px; border: 1px solid var(--pipo-border);
+}
+.pipo-order-dialog::backdrop { background: rgba(61, 41, 39, .48); }
+.pipo-order-dialog .modal-footer { flex-wrap: wrap; }
+@media (max-width: 520px) {
+  .pipo-shipping-grid, .pipo-shipping-fields { grid-template-columns: minmax(0, 1fr); }
+  .pipo-shipping-fields :is(input, select), .pipo-shipping-edit :is(input:not([type=checkbox]), select, textarea) { font-size: 1rem; }
+}
+.pipo-shade-pill:has(.pipo-shade-reservations) { flex-wrap: wrap; }
+.pipo-shade-reservations { flex: 1 0 100%; font-size: .7rem; white-space: normal; }

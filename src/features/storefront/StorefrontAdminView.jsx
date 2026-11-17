@@ -26,6 +26,48 @@ import {
 import { formatMoney } from '../../domain/calculations.js';
 import { getSupabaseConfig, uploadStorefrontMedia } from '../../adapters/storageRepository.js';
 
+import { DEFAULT_SHIPPING_METHODS } from '../../domain/constants.js';
+
+function ShippingMethodForm({ method, onSave }) {
+  const [pending, setPending] = useState(false);
+  async function save(event) {
+    event.preventDefault();
+    if (pending) return;
+    const fields = new FormData(event.currentTarget);
+    setPending(true);
+    try {
+      await onSave({
+        id: method.id,
+        baseFee: Number(fields.get('fee')),
+        minAdvanceAmount: Number(fields.get('advance')),
+        description: String(fields.get('description')).trim(),
+        active: fields.has('active')
+      });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <form className="card pipo-shipping-edit" onSubmit={save}>
+      <h3 className="card-title">{method.name}</h3>
+      <div className="pipo-shipping-fields">
+        <label className="field">Tarifa base (S/)
+          <input name="fee" type="number" min="0" step="0.01" required defaultValue={method.baseFee} />
+        </label>
+        <label className="field">Adelanto mínimo (S/)
+          <input name="advance" type="number" min="0" step="0.01" required defaultValue={method.minAdvanceAmount} />
+        </label>
+      </div>
+      <label className="field">Descripción
+        <textarea name="description" rows={2} defaultValue={method.description} />
+      </label>
+      <label className="pipo-shipping-choice"><input name="active" type="checkbox" defaultChecked={method.active !== false} /><span>Disponible para pedidos</span></label>
+      <button className="btn btn-primary" type="submit" disabled={pending}>{pending ? 'Guardando…' : 'Guardar método'}</button>
+    </form>
+  );
+}
+
 export default function StorefrontAdminView({
   db,
   onSaveDeliveryPoint,
@@ -37,6 +79,7 @@ export default function StorefrontAdminView({
   onSimulateYapeNotification,
   onConfirmWebOrderManual,
   onOpenPublicStorefront,
+  onSaveShippingMethod,
   onNavigateToSales
 }) {
   const [subTab, setSubTab] = useState('delivery'); // 'delivery' | 'curation' | 'yape'
@@ -371,6 +414,17 @@ export default function StorefrontAdminView({
       </div>
 
       {/* TAB 1: DELIVERY POINTS & AVAILABILITY SCHEDULER */}
+      {subTab === 'delivery' && onSaveShippingMethod && (
+        <section className="card">
+          <h2 className="card-title">Métodos de entrega y tarifas</h2>
+          <div className="pipo-shipping-fields">
+            {(db.shippingMethods?.length ? db.shippingMethods : DEFAULT_SHIPPING_METHODS).map((method) => (
+              <ShippingMethodForm key={method.id} method={method} onSave={onSaveShippingMethod} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {subTab === 'delivery' && (
         <div className="grid-2" style={{ alignItems: 'start' }}>
           {/* Left Column: Meeting Points (UNAC, Train Stations, etc.) */}
