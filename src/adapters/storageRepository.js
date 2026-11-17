@@ -10,7 +10,11 @@ import {
 } from '../domain/calculations.js';
 
 export { normalizePaymentMethod };
-import { DEFAULT_COMBO_RATIO, PRODUCT_CATEGORIES } from '../domain/constants.js';
+import {
+  DEFAULT_COMBO_RATIO,
+  DEFAULT_SHIPPING_METHODS,
+  PRODUCT_CATEGORIES
+} from '../domain/constants.js';
 import {
   STOREFRONT_MEDIA_BUCKET,
   computeCompressedDimensions,
@@ -67,6 +71,7 @@ function createEmptyDatabase() {
     sales: [],
     deliveryPoints: [],
     deliverySlots: [],
+    shippingMethods: DEFAULT_SHIPPING_METHODS.map((m) => ({ ...m })),
     yapeGateway: {
       id: 'primary',
       isAwake: true,
@@ -181,7 +186,11 @@ export function loadLocalDb() {
       accounts:
         Array.isArray(parsed.accounts) && parsed.accounts.length > 0
           ? parsed.accounts
-          : DEFAULT_LOCAL_ACCOUNTS
+          : DEFAULT_LOCAL_ACCOUNTS,
+      shippingMethods:
+        Array.isArray(parsed.shippingMethods) && parsed.shippingMethods.length > 0
+          ? parsed.shippingMethods
+          : DEFAULT_SHIPPING_METHODS.map((m) => ({ ...m }))
     };
   } catch {
     return createEmptyDatabase();
@@ -796,6 +805,7 @@ export function applyCreateOrUpdateCustomer(db, payload) {
         code,
         name: payload.name.trim(),
         whatsapp: cleanWhatsapp,
+        dni: (payload.dni || next.customers[idx].dni || '').trim(),
         socialPlatform: payload.socialPlatform || 'instagram',
         socialHandle: (payload.socialHandle || '').trim(),
         notes: (payload.notes || '').trim()
@@ -809,6 +819,7 @@ export function applyCreateOrUpdateCustomer(db, payload) {
     code,
     name: payload.name.trim(),
     whatsapp: cleanWhatsapp,
+    dni: (payload.dni || '').trim(),
     socialPlatform: payload.socialPlatform || 'instagram',
     socialHandle: (payload.socialHandle || '').trim(),
     notes: (payload.notes || '').trim(),
@@ -1005,6 +1016,25 @@ export function applyCreateSale(db, payload) {
     balanceDue: totals.balanceDue,
     notes: (payload.notes || '').trim(),
     createdBy: payload.createdBy || '',
+    deliveryMethod: payload.deliveryMethod || 'unac_pickup',
+    shippingPaymentMode: payload.shippingPaymentMode || 'free',
+    recipientDni: (payload.recipientDni || '').trim(),
+    destinationRegion: (payload.destinationRegion || '').trim(),
+    destinationAddress: (payload.destinationAddress || '').trim(),
+    carrierTrackingCode: (payload.carrierTrackingCode || '').trim(),
+    carrierSecurityCode: (payload.carrierSecurityCode || '').trim(),
+    fulfillmentStage: payload.fulfillmentStage || 'pending_pack',
+    paymentPlan: payload.paymentPlan || 'full',
+    expectedInitialPayment: roundMoney(
+      toNumber(payload.expectedInitialPayment, totals.totalCharged)
+    ),
+    reservationExpiresAt: payload.reservationExpiresAt || null,
+    separationDueAt: payload.separationDueAt || null,
+    termsAcceptedAt: payload.termsAcceptedAt || null,
+    refundedAmount: roundMoney(toNumber(payload.refundedAmount, 0)),
+    forfeitedFeeAmount: roundMoney(toNumber(payload.forfeitedFeeAmount, 0)),
+    deliverySlotId: payload.deliverySlotId || null,
+    deliveryPointId: payload.deliveryPointId || null,
     items: totals.items,
     suppliesUsed: totals.suppliesUsed,
     payments,
@@ -1151,6 +1181,111 @@ export function applyUpdateSaleStatus(db, saleId, nextStatus) {
   }
 
   sale.status = nextStatus;
+  return next;
+}
+
+export function applyCancelSaleWithPartialRefund(db, payload = {}) {
+  const saleId = typeof payload === 'string' ? payload : payload.saleId || payload.id || '';
+  if (!saleId) return structuredClone(db);
+
+  let next = applyUpdateSaleStatus(db, saleId, 'cancelled');
+  const idx = next.sales.findIndex((s) => s.id === saleId);
+  if (idx < 0) return next;
+
+  const sale = next.sales[idx];
+  const refundAmount = roundMoney(Math.max(0, toNumber(payload.refundAmount, 0)));
+  const retainedFee = roundMoney(Math.max(0, toNumber(payload.retainedFee, 0)));
+  const refundMethod = normalizePaymentMethod(payload.refundMethod || 'yape');
+  const reasonNote = String(payload.reasonNote || '').trim();
+
+  sale.payments = Array.isArray(sale.payments) ? sale.payments : [];
+  if (refundAmount > 0) {
+    sale.payments.push({
+      id: uid(),
+      paymentDate: new Date().toISOString(),
+      amount: refundAmount,
+      method: refundMethod,
+      paymentConcept: 'partial_refund',
+      note: reasonNote || 'Reembolso parcial por no recojo / vencimiento de reserva'
+    });
+  }
+  if (retainedFee > 0) {
+    sale.payments.push({
+      id: uid(),
+      paymentDate: new Date().toISOString(),
+      amount: retainedFee,
+      method: refundMethod,
+      paymentConcept: 'forfeited_retention',
+      note: reasonNote || 'Retención administrativa/logística por separación vencida'
+    });
+  }
+
+  sale.refundedAmount = roundMoney(toNumber(sale.refundedAmount, 0) + refundAmount);
+  sale.forfeitedFeeAmount = roundMoney(toNumber(sale.forfeitedFeeAmount, 0) + retainedFee);
+  sale.balanceDue = 0;
+  sale.reservationExpiresAt = null;
+  if (reasonNote) {
+    sale.notes = sale.notes ? `${sale.notes} · [Cancelación: ${reasonNote}]` : `[Cancelación: ${reasonNote}]`;
+  }
+  return next;
+}
+
+export function applyUpdateSaleCarrierDispatch(db, payload = {}) {
+  const next = structuredClone(db);
+  const saleId = payload.saleId || payload.id || '';
+  const idx = (next.sales || []).findIndex((s) => s.id === saleId);
+  if (idx < 0) return next;
+
+  const sale = next.sales[idx];
+  if (payload.carrierTrackingCode !== undefined) {
+    sale.carrierTrackingCode = String(payload.carrierTrackingCode || '').trim();
+  }
+  if (payload.carrierSecurityCode !== undefined) {
+    sale.carrierSecurityCode = String(payload.carrierSecurityCode || '').trim();
+  }
+  if (payload.fulfillmentStage) {
+    sale.fulfillmentStage = payload.fulfillmentStage;
+  }
+  return next;
+}
+
+export function applySaveShippingMethod(db, payload = {}) {
+  const next = structuredClone(db);
+  const baseList =
+    Array.isArray(next.shippingMethods) && next.shippingMethods.length > 0
+      ? next.shippingMethods
+      : DEFAULT_SHIPPING_METHODS.map((m) => ({ ...m }));
+
+  const id = String(payload.id || '').trim();
+  const idx = baseList.findIndex((m) => m.id === id);
+  if (idx >= 0) {
+    baseList[idx] = {
+      ...baseList[idx],
+      ...(payload.name !== undefined ? { name: String(payload.name).trim() } : {}),
+      ...(payload.baseFee !== undefined ? { baseFee: roundMoney(Math.max(0, toNumber(payload.baseFee, 0))) } : {}),
+      ...(payload.minAdvanceAmount !== undefined
+        ? { minAdvanceAmount: roundMoney(Math.max(0, toNumber(payload.minAdvanceAmount, 0))) }
+        : {}),
+      ...(payload.active !== undefined ? { active: Boolean(payload.active) } : {}),
+      ...(payload.description !== undefined ? { description: String(payload.description || '').trim() } : {})
+    };
+  } else if (id) {
+    baseList.push({
+      id,
+      code: payload.code || id.toUpperCase(),
+      name: String(payload.name || id).trim(),
+      carrier: payload.carrier || 'olva',
+      shippingPaymentMode: payload.shippingPaymentMode || 'prepaid_to_pipo',
+      baseFee: roundMoney(Math.max(0, toNumber(payload.baseFee, 0))),
+      minAdvanceAmount: roundMoney(Math.max(0, toNumber(payload.minAdvanceAmount, 0))),
+      requiresDni: Boolean(payload.requiresDni),
+      requiresAddress: Boolean(payload.requiresAddress),
+      active: payload.active !== false,
+      sortOrder: Math.trunc(toNumber(payload.sortOrder, baseList.length + 1)),
+      description: String(payload.description || '').trim()
+    });
+  }
+  next.shippingMethods = baseList;
   return next;
 }
 
@@ -1717,6 +1852,38 @@ export async function subscribeSupabaseRealtime(onDatabaseChanged, onStatusChang
   };
 }
 
+export function subscribePublicVariantAvailability(onAvailabilityChange) {
+  const client = getSupabaseClient();
+  if (!client || typeof client.channel !== 'function') return () => {};
+
+  const channel = client
+    .channel(`pipo-public-stock-${Date.now()}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'public_variant_availability' },
+      (payload) => {
+        const row = payload?.new || payload?.old;
+        if (!row || !row.variant_id) return;
+        if (typeof onAvailabilityChange === 'function') {
+          onAvailabilityChange({
+            variantId: row.variant_id,
+            stock: Number(row.available_stock ?? row.stock ?? 0),
+            reservedUnpaid: Number(row.reserved_unpaid ?? 0),
+            reservedAdvance: Number(row.reserved_advance ?? 0),
+            updatedAt: row.updated_at || new Date().toISOString()
+          });
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    if (typeof client.removeChannel === 'function') {
+      client.removeChannel(channel);
+    }
+  };
+}
+
 // ============================================================================
 // Direct Immediate Supabase PostgreSQL Queries & Targeted Row Mutations
 // ============================================================================
@@ -1739,6 +1906,7 @@ async function executeFetchQueries(client) {
     salePaymentsRes,
     deliveryPointsRes,
     deliverySlotsRes,
+    shippingMethodsRes,
     yapeGatewayRes,
     yapeIncomingRes
   ] = await Promise.all([
@@ -1762,6 +1930,7 @@ async function executeFetchQueries(client) {
     client.from('sale_payments').select('*').order('payment_date', { ascending: true }),
     client.from('delivery_points').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
     client.from('delivery_slots').select('*').order('slot_date', { ascending: true }).order('created_at', { ascending: true }),
+    client.from('shipping_methods').select('*').order('sort_order', { ascending: true }).then((r) => r, () => ({ data: null, error: null })),
     client.from('yape_gateway_status').select('*').eq('id', 'primary').maybeSingle(),
     client.from('yape_incoming_payments').select('id, sender_full_name, normalized_sender_name, amount, operation_code, received_at, consumed, matched_sale_id').order('received_at', { ascending: false }).limit(20)
   ]);
@@ -1804,6 +1973,7 @@ async function executeFetchQueries(client) {
     salePaymentsRes,
     deliveryPointsRes,
     deliverySlotsRes,
+    shippingMethodsRes,
     yapeGatewayRes,
     yapeIncomingRes
   };
@@ -1855,6 +2025,7 @@ export async function fetchSupabaseDatabase() {
     salePaymentsRes,
     deliveryPointsRes,
     deliverySlotsRes,
+    shippingMethodsRes,
     yapeGatewayRes,
     yapeIncomingRes
   } = queryResults;
@@ -2031,6 +2202,7 @@ export async function fetchSupabaseDatabase() {
       code: c.code,
       name: c.name,
       whatsapp: c.whatsapp,
+      dni: c.dni || '',
       socialPlatform: c.social_platform,
       socialHandle: c.social_handle || '',
       notes: c.notes || '',
@@ -2062,11 +2234,43 @@ export async function fetchSupabaseDatabase() {
       paymentVerificationStatus: s.payment_verification_status || 'manual',
       deliveryPointId: s.delivery_point_id || null,
       deliverySlotId: s.delivery_slot_id || null,
+      deliveryMethod: s.delivery_method || 'unac_pickup',
+      shippingPaymentMode: s.shipping_payment_mode || 'free',
+      recipientDni: s.recipient_dni || '',
+      destinationRegion: s.destination_region || '',
+      destinationAddress: s.destination_address || '',
+      carrierTrackingCode: s.carrier_tracking_code || '',
+      carrierSecurityCode: s.carrier_security_code || '',
+      fulfillmentStage: s.fulfillment_stage || 'pending_pack',
+      paymentPlan: s.payment_plan || 'full',
+      expectedInitialPayment: Number(s.expected_initial_payment ?? s.total_charged ?? 0),
+      reservationExpiresAt: s.reservation_expires_at || null,
+      separationDueAt: s.separation_due_at || null,
+      termsAcceptedAt: s.terms_accepted_at || null,
+      refundedAmount: Number(s.refunded_amount ?? 0),
+      forfeitedFeeAmount: Number(s.forfeited_fee_amount ?? 0),
       items: saleItemsBySale.get(s.id) || [],
       suppliesUsed: saleSuppliesBySale.get(s.id) || [],
       payments: salePaymentsBySale.get(s.id) || [],
       createdAt: s.created_at
     })),
+    shippingMethods:
+      !shippingMethodsRes?.error && Array.isArray(shippingMethodsRes?.data) && shippingMethodsRes.data.length > 0
+        ? shippingMethodsRes.data.map((sm) => ({
+            id: sm.id,
+            code: sm.code,
+            name: sm.name,
+            carrier: sm.carrier,
+            shippingPaymentMode: sm.shipping_payment_mode,
+            baseFee: Number(sm.base_fee),
+            minAdvanceAmount: Number(sm.min_advance_amount),
+            requiresDni: Boolean(sm.requires_dni),
+            requiresAddress: Boolean(sm.requires_address),
+            active: sm.active !== false,
+            sortOrder: Number(sm.sort_order ?? 0),
+            description: sm.description || ''
+          }))
+        : DEFAULT_SHIPPING_METHODS.map((m) => ({ ...m })),
     deliveryPoints: (deliveryPointsRes?.data || []).map((dp) => ({
       id: dp.id,
       code: dp.code,
@@ -2649,6 +2853,7 @@ export async function cloudSaveCustomer(currentDb, payload) {
     code,
     name: payload.name.trim(),
     whatsapp: (payload.whatsapp || '').trim(),
+    dni: (payload.dni || '').trim(),
     social_platform: payload.socialPlatform || 'instagram',
     social_handle: (payload.socialHandle || '').trim(),
     notes: (payload.notes || '').trim()
@@ -2809,6 +3014,7 @@ export async function cloudCreateSale(currentDb, payload) {
       code: custCode,
       name: payload.newCustomer.name.trim(),
       whatsapp: (payload.newCustomer.whatsapp || '').trim(),
+      dni: (payload.newCustomer.dni || '').trim(),
       social_platform: payload.newCustomer.socialPlatform || 'instagram',
       social_handle: (payload.newCustomer.socialHandle || '').trim(),
       notes: (payload.newCustomer.notes || '').trim()
@@ -2931,7 +3137,24 @@ export async function cloudCreateSale(currentDb, payload) {
     amount_paid: totals.amountPaid,
     balance_due: totals.balanceDue,
     notes: (payload.notes || '').trim(),
-    created_by: payload.createdBy || ''
+    created_by: payload.createdBy || '',
+    delivery_method: payload.deliveryMethod || 'unac_pickup',
+    shipping_payment_mode: payload.shippingPaymentMode || 'free',
+    recipient_dni: (payload.recipientDni || '').trim(),
+    destination_region: (payload.destinationRegion || '').trim(),
+    destination_address: (payload.destinationAddress || '').trim(),
+    carrier_tracking_code: (payload.carrierTrackingCode || '').trim(),
+    carrier_security_code: (payload.carrierSecurityCode || '').trim(),
+    fulfillment_stage: payload.fulfillmentStage || 'pending_pack',
+    payment_plan: payload.paymentPlan || 'full',
+    expected_initial_payment: roundMoney(
+      toNumber(payload.expectedInitialPayment, totals.totalCharged)
+    ),
+    reservation_expires_at: payload.reservationExpiresAt || null,
+    separation_due_at: payload.separationDueAt || null,
+    terms_accepted_at: payload.termsAcceptedAt || null,
+    refunded_amount: roundMoney(toNumber(payload.refundedAmount, 0)),
+    forfeited_fee_amount: roundMoney(toNumber(payload.forfeitedFeeAmount, 0))
   });
   if (saleErr) throw new Error(`Error al guardar pedido: ${saleErr.message}`);
 
@@ -3026,11 +3249,14 @@ export async function cloudAddSalePayment(saleId, paymentPayload) {
 
   const { data: allPays } = await client
     .from('sale_payments')
-    .select('amount')
+    .select('amount, payment_concept')
     .eq('sale_id', saleId);
 
   const totalPaid = roundMoney(
-    (allPays || []).reduce((acc, p) => acc + Number(p.amount), 0)
+    (allPays || []).reduce(
+      (acc, p) => acc + (p.payment_concept === 'partial_refund' ? -Number(p.amount) : Number(p.amount)),
+      0
+    )
   );
 
   let newTotalCharged = Number(saleRow.total_charged);
@@ -3365,6 +3591,7 @@ export async function syncStateToSupabase(db) {
         code: c.code,
         name: c.name,
         whatsapp: c.whatsapp,
+        dni: c.dni || '',
         social_platform: c.socialPlatform,
         social_handle: c.socialHandle || '',
         notes: c.notes || ''
@@ -3395,7 +3622,22 @@ export async function syncStateToSupabase(db) {
         amount_paid: s.amountPaid,
         balance_due: s.balanceDue,
         notes: s.notes || '',
-        created_by: s.createdBy || ''
+        created_by: s.createdBy || '',
+        delivery_method: s.deliveryMethod || 'unac_pickup',
+        shipping_payment_mode: s.shippingPaymentMode || 'free',
+        recipient_dni: s.recipientDni || '',
+        destination_region: s.destinationRegion || '',
+        destination_address: s.destinationAddress || '',
+        carrier_tracking_code: s.carrierTrackingCode || '',
+        carrier_security_code: s.carrierSecurityCode || '',
+        fulfillment_stage: s.fulfillmentStage || 'pending_pack',
+        payment_plan: s.paymentPlan || 'full',
+        expected_initial_payment: s.expectedInitialPayment ?? s.totalCharged ?? 0,
+        reservation_expires_at: s.reservationExpiresAt || null,
+        separation_due_at: s.separationDueAt || null,
+        terms_accepted_at: s.termsAcceptedAt || null,
+        refunded_amount: s.refundedAmount ?? 0,
+        forfeited_fee_amount: s.forfeitedFeeAmount ?? 0
       }))
     );
     if (error) throw new Error(`Ventas: ${error.message}`);
@@ -3625,6 +3867,54 @@ export async function confirmWebOrderManual(saleId) {
 
 export const cloudConfirmWebOrderManual = confirmWebOrderManual;
 
+export async function cancelSaleWithPartialRefund(saleId, payload = {}) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no disponible.');
+  const { data, error } = await client.rpc('cancel_sale_with_partial_refund', {
+    target_sale_id: saleId,
+    refund_amount: roundMoney(Math.max(0, toNumber(payload.refundAmount, 0))),
+    refund_method: normalizePaymentMethod(payload.refundMethod || 'yape'),
+    retained_fee: roundMoney(Math.max(0, toNumber(payload.retainedFee, 0))),
+    reason_note: String(payload.reasonNote || '').trim()
+  });
+  if (error) throw new Error(`Error al cancelar con reembolso parcial: ${error.message}`);
+  const db = await fetchSupabaseDatabase();
+  return { db, result: data };
+}
+
+export async function updateSaleCarrierDispatch(saleId, payload = {}) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no disponible.');
+  const { data, error } = await client.rpc('update_sale_carrier_dispatch', {
+    target_sale_id: saleId,
+    tracking_code: String(payload.carrierTrackingCode || payload.trackingCode || '').trim(),
+    security_code: String(payload.carrierSecurityCode || payload.securityCode || '').trim(),
+    next_stage: payload.fulfillmentStage || payload.nextStage || 'dispatched'
+  });
+  if (error) throw new Error(`Error al actualizar guía/despacho: ${error.message}`);
+  const db = await fetchSupabaseDatabase();
+  return { db, result: data };
+}
+
+export async function cloudSaveShippingMethod(_currentDb, payload = {}) {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase no disponible.');
+  const id = String(payload.id || '').trim();
+  if (!id) throw new Error('ID de método de envío requerido.');
+  const row = {
+    ...(payload.name !== undefined ? { name: String(payload.name).trim() } : {}),
+    ...(payload.baseFee !== undefined ? { base_fee: roundMoney(Math.max(0, toNumber(payload.baseFee, 0))) } : {}),
+    ...(payload.minAdvanceAmount !== undefined
+      ? { min_advance_amount: roundMoney(Math.max(0, toNumber(payload.minAdvanceAmount, 0))) }
+      : {}),
+    ...(payload.active !== undefined ? { active: Boolean(payload.active) } : {}),
+    ...(payload.description !== undefined ? { description: String(payload.description || '').trim() } : {})
+  };
+  const { error } = await client.from('shipping_methods').update(row).eq('id', id);
+  if (error) throw new Error(`Error al actualizar método de envío: ${error.message}`);
+  return fetchSupabaseDatabase();
+}
+
 // ============================================================================
 // 10. Public Storefront Customer RPCs (Zero-Login Anonymous Access)
 // ============================================================================
@@ -3691,6 +3981,11 @@ export async function fetchPublicStorefrontCatalog(fallbackDb = null) {
     deliverySlots: (source.deliverySlots || []).filter(
       (ds) => ds.active !== false && (ds.bookedOrders || 0) < (ds.maxOrders || 10)
     ),
+    shippingMethods: (
+      Array.isArray(source.shippingMethods) && source.shippingMethods.length > 0
+        ? source.shippingMethods
+        : DEFAULT_SHIPPING_METHODS
+    ).filter((sm) => sm.active !== false),
     yapeGateway: source.yapeGateway || {
       isAwake: true,
       lastHeartbeatAt: new Date().toISOString(),

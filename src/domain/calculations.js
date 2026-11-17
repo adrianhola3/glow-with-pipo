@@ -1,4 +1,9 @@
-import { DEFAULT_COMBO_RATIO } from './constants.js';
+import {
+  DEFAULT_COMBO_RATIO,
+  DEFAULT_SHIPPING_METHODS,
+  UNAC_MIN_RETENTION,
+  UNAC_RETENTION_RATE
+} from './constants.js';
 
 export function normalizePaymentMethod(method) {
   const m = String(method || '').trim().toLowerCase();
@@ -251,9 +256,24 @@ export function computeSaleTotals({
   const netProfit = roundMoney(productsRevenue - productsCost - suppliesCost + shippingNet);
 
   const amountPaid = roundMoney(
-    payments.reduce((acc, p) => acc + Math.max(0, toNumber(p.amount, 0)), 0)
+    payments.reduce((acc, p) => {
+      if (p.paymentConcept === 'partial_refund') {
+        return acc - Math.max(0, toNumber(p.amount, 0));
+      }
+      if (p.paymentConcept === 'forfeited_retention') {
+        return acc;
+      }
+      return acc + Math.max(0, toNumber(p.amount, 0));
+    }, 0)
   );
-  const balanceDue = roundMoney(Math.max(0, totalCharged - amountPaid));
+  const safeAmountPaid = Math.max(0, amountPaid);
+  const refundedAmount = roundMoney(
+    payments.reduce(
+      (acc, p) => acc + (p.paymentConcept === 'partial_refund' ? Math.max(0, toNumber(p.amount, 0)) : 0),
+      0
+    )
+  );
+  const balanceDue = roundMoney(Math.max(0, totalCharged - safeAmountPaid));
 
   return {
     items: enrichedItems,
@@ -269,9 +289,64 @@ export function computeSaleTotals({
     shippingCost: safeShippingCost,
     totalCharged,
     netProfit,
-    amountPaid,
+    amountPaid: safeAmountPaid,
+    refundedAmount,
     balanceDue,
     isFullyPaid: balanceDue <= 0.009
+  };
+}
+
+export function computeSeparationPolicy({
+  totalCharged = 0,
+  deliveryMethod = 'unac_pickup',
+  shippingMethods = [],
+  paymentPlan = 'full',
+  shippingCostEstimate = 0
+} = {}) {
+  const safeTotal = roundMoney(Math.max(0, toNumber(totalCharged, 0)));
+  const catalogMethods =
+    Array.isArray(shippingMethods) && shippingMethods.length > 0
+      ? shippingMethods
+      : DEFAULT_SHIPPING_METHODS;
+  const method =
+    catalogMethods.find((m) => m.id === deliveryMethod) ||
+    DEFAULT_SHIPPING_METHODS.find((m) => m.id === deliveryMethod) ||
+    DEFAULT_SHIPPING_METHODS[0];
+
+  const minAdvanceAmount = Math.max(0, toNumber(method?.minAdvanceAmount, 0));
+  const isAdvance = paymentPlan === 'advance_50';
+
+  let expectedInitialPayment = safeTotal;
+  if (isAdvance) {
+    const half = roundMoney(safeTotal * 0.5);
+    expectedInitialPayment =
+      minAdvanceAmount > 0
+        ? roundMoney(Math.max(half, Math.min(safeTotal, minAdvanceAmount)))
+        : half;
+  }
+  const balanceAfterAdvance = roundMoney(Math.max(0, safeTotal - expectedInitialPayment));
+
+  const isAgency = method?.carrier === 'shalom' || method?.carrier === 'olva';
+  const minRetentionSuggested = isAgency
+    ? roundMoney(Math.min(expectedInitialPayment, Math.max(10, toNumber(shippingCostEstimate, 25))))
+    : roundMoney(
+        Math.min(
+          expectedInitialPayment,
+          Math.max(UNAC_MIN_RETENTION, roundMoney(expectedInitialPayment * UNAC_RETENTION_RATE))
+        )
+      );
+  const suggestedRefundIfCancelled = roundMoney(
+    Math.max(0, expectedInitialPayment - minRetentionSuggested)
+  );
+
+  return {
+    method,
+    paymentPlan: isAdvance ? 'advance_50' : 'full',
+    totalCharged: safeTotal,
+    expectedInitialPayment,
+    balanceAfterAdvance,
+    minRetentionSuggested,
+    suggestedRefundIfCancelled
   };
 }
 
@@ -316,6 +391,43 @@ export function formatSaleWhatsAppTicket(sale = {}, customer = {}) {
     const shade = item.shadeNameSnapshot ? ` · ${text(item.shadeNameSnapshot, '')}` : '';
     return `• ${Math.max(1, Math.trunc(toNumber(item.quantity, 1)))} × ${product}${shade}`;
   });
+  const deliveryMethod = sale.deliveryMethod || 'unac_pickup';
+  const methodLabel =
+    deliveryMethod === 'shalom_agency'
+      ? 'Shalom (Agencia a Agencia · flete pago en destino)'
+      : deliveryMethod === 'olva_lima'
+        ? 'Olva Courier (Lima / Callao)'
+        : deliveryMethod === 'olva_provincia'
+          ? 'Olva Courier (Provincias)'
+          : 'Entrega UNAC / Punto Glow';
+  const tracking = text(sale.carrierTrackingCode, '');
+  const securityKey = text(sale.carrierSecurityCode, '');
+  const isFullyPaid = roundMoney(toNumber(sale.balanceDue, 0)) <= 0.009;
+  const extraLines = [];
+  if (deliveryMethod !== 'unac_pickup') {
+    extraLines.push(`🚚 Modalidad: ${methodLabel}`);
+    if (customer?.dni || sale.recipientDni) {
+      extraLines.push(`🪪 DNI recojo: ${text(sale.recipientDni || customer?.dni, '')}`);
+    }
+    if (sale.destinationRegion) {
+      extraLines.push(`🏙️ Destino / Agencia: ${text(sale.destinationRegion, '')}`);
+    }
+    if (sale.destinationAddress) {
+      extraLines.push(`🏠 Dirección: ${text(sale.destinationAddress, '')}`);
+    }
+    if (tracking) {
+      extraLines.push(`📦 N° Guía / Tracking: ${tracking}`);
+    }
+    if (deliveryMethod === 'shalom_agency') {
+      if (isFullyPaid && securityKey) {
+        extraLines.push(`🔐 Clave de recojo Shalom: ${securityKey}`);
+      } else if (!isFullyPaid) {
+        extraLines.push(
+          `🔐 Clave de recojo Shalom: Se enviará al completar el saldo (${formatCurrency(sale.balanceDue)})`
+        );
+      }
+    }
+  }
   return [
     '🎀 *Glow with Pipo*',
     `*Pedido ${text(sale.code, 'Sin código')}*`,
@@ -328,7 +440,8 @@ export function formatSaleWhatsAppTicket(sale = {}, customer = {}) {
     `Adelanto pagado: ${formatCurrency(sale.amountPaid)}`,
     `*Saldo pendiente: ${formatCurrency(sale.balanceDue)}*`,
     '',
-    `📍 Entrega: ${text(sale.deliveryLocation, 'Por coordinar')}`,
+    ...extraLines,
+    `📍 Entrega: ${text(sale.deliveryLocation || sale.destinationRegion, 'Por coordinar')}`,
     `📅 Fecha: ${text(sale.deliveryDate, 'Por coordinar')}`,
     `🕒 Horario: ${text(sale.deliveryTime, 'Por coordinar')}`
   ].join('\n');
@@ -429,16 +542,29 @@ export function computeDashboardMetrics(db, options = {}) {
 
   // Active sales (pending_delivery + delivered)
   const activeSales = sales.filter((s) => s.status !== 'cancelled');
+  const retainedCancelledSales = sales.filter(
+    (s) =>
+      s.status === 'cancelled' &&
+      (toNumber(s.forfeitedFeeAmount, 0) > 0 ||
+        toNumber(s.refundedAmount, 0) > 0 ||
+        (s.payments || []).some(
+          (p) => p.paymentConcept === 'partial_refund' || p.paymentConcept === 'forfeited_retention'
+        ))
+  );
   const validSales = activeSales.filter((s) => inPeriod(s.saleDate));
+  const validRetainedCancelled = retainedCancelledSales.filter((s) => inPeriod(s.saleDate));
   const deliveredSales = validSales.filter((s) => s.status === 'delivered');
   const paymentsByMethod = { yape: 0, plin: 0, cash: 0, transfer: 0, total: 0 };
-  // Cash collection follows the receipt date, including balances of older orders.
+  // Cash collection follows the receipt date, including balances of older orders and partial refunds.
   // Legacy receipts without a date fall back to the order date.
-  for (const sale of activeSales) {
+  for (const sale of [...activeSales, ...retainedCancelledSales]) {
     for (const payment of sale.payments || []) {
+      if (payment.paymentConcept === 'forfeited_retention') continue;
       if (!inPeriod(payment.paymentDate || sale.saleDate)) continue;
       const method = normalizePaymentMethod(payment.method);
-      paymentsByMethod[method] = roundMoney(paymentsByMethod[method] + Math.max(0, toNumber(payment.amount, 0)));
+      const amt = Math.max(0, toNumber(payment.amount, 0));
+      const delta = payment.paymentConcept === 'partial_refund' ? -amt : amt;
+      paymentsByMethod[method] = roundMoney(paymentsByMethod[method] + delta);
     }
   }
   paymentsByMethod.total = roundMoney(paymentsByMethod.yape + paymentsByMethod.plin + paymentsByMethod.cash + paymentsByMethod.transfer);
@@ -455,11 +581,14 @@ export function computeDashboardMetrics(db, options = {}) {
       return da.localeCompare(db);
     });
 
+  const totalRetainedFees = roundMoney(
+    validRetainedCancelled.reduce((acc, s) => acc + Math.max(0, toNumber(s.forfeitedFeeAmount, 0)), 0)
+  );
   const realizedRevenue = roundMoney(
     validSales.reduce((acc, s) => acc + toNumber(s.productsRevenue, 0), 0)
   );
   const realizedNetProfit = roundMoney(
-    validSales.reduce((acc, s) => acc + toNumber(s.netProfit, 0), 0)
+    validSales.reduce((acc, s) => acc + toNumber(s.netProfit, 0), 0) + totalRetainedFees
   );
   const deliveredNetProfit = roundMoney(
     deliveredSales.reduce((acc, s) => acc + toNumber(s.netProfit, 0), 0)
@@ -514,6 +643,7 @@ export function computeDashboardMetrics(db, options = {}) {
     pendingDeliveries,
     realizedRevenue,
     realizedNetProfit,
+    totalRetainedFees,
     deliveredNetProfit,
     totalReceivables,
     totalSuppliesAbsorbed,

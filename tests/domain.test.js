@@ -6,13 +6,19 @@ import {
   computeMargins,
   computePackageUnitCost,
   computeSaleTotals,
+  computeSeparationPolicy,
   computeWeightedAverageCost,
   formatSaleWhatsAppTicket,
   normalizePaymentMethod
 } from '../src/domain/calculations.js';
 import {
+  DEFAULT_SHIPPING_METHODS,
+  FULFILLMENT_STAGES
+} from '../src/domain/constants.js';
+import {
   applyAddCategory,
   applyAddSalePayment,
+  applyCancelSaleWithPartialRefund,
   applyConfirmWebOrderManual,
   applyCreateOrUpdateCombo,
   applyCreateOrUpdateCustomer,
@@ -32,12 +38,16 @@ import {
   applyDeleteDeliveryPoint,
   applySaveDeliverySlot,
   applyDeleteDeliverySlot,
+  applySaveShippingMethod,
+  applyUpdateSaleCarrierDispatch,
   applyUpdateStorefrontMerchandising,
   applyUpdateProduct,
   applyUpdateSalePrice,
   applyUpdateSaleStatus,
+  cancelSaleWithPartialRefund,
   cloudDeleteCustomer,
   cloudDeleteSale,
+  cloudSaveShippingMethod,
   cloudUpdateSaleStatus,
   compressImageToWebP,
   computeCompressedDimensions,
@@ -51,6 +61,8 @@ import {
   setSupabaseClientForTests,
   shouldSuppressRealtimeEcho,
   STOREFRONT_MEDIA_BUCKET,
+  subscribePublicVariantAvailability,
+  updateSaleCarrierDispatch,
   uploadStorefrontMedia
 } from '../src/adapters/storageRepository.js';
 
@@ -1164,6 +1176,201 @@ test('shouldSuppressRealtimeEcho prevents duplicate full-DB pulls within cooldow
   assert.equal(shouldSuppressRealtimeEcho(10180, 2500), true);
   assert.equal(shouldSuppressRealtimeEcho(12499, 2500), true);
   assert.equal(shouldSuppressRealtimeEcho(12500, 2500), false);
+});
+
+test('Phase 5: computeSeparationPolicy calculates UNAC 50% + retention (20%/min S/5), Shalom min S/30 advance, and Olva prepaid totals', () => {
+  assert.equal(DEFAULT_SHIPPING_METHODS.length, 4);
+  assert.ok(FULFILLMENT_STAGES.dispatched);
+
+  // UNAC 50% advance on S/ 40 -> pays S/ 20, retention 20% = 4 -> clamped to min S/ 5, refund = S/ 15
+  const unacLow = computeSeparationPolicy({
+    totalCharged: 40,
+    deliveryMethod: 'unac_pickup',
+    paymentPlan: 'advance_50'
+  });
+  assert.equal(unacLow.expectedInitialPayment, 20);
+  assert.equal(unacLow.balanceAfterAdvance, 20);
+  assert.equal(unacLow.minRetentionSuggested, 5);
+  assert.equal(unacLow.suggestedRefundIfCancelled, 15);
+
+  // UNAC 50% advance on S/ 100 -> pays S/ 50, retention 20% = S/ 10, refund = S/ 40
+  const unacHigh = computeSeparationPolicy({
+    totalCharged: 100,
+    deliveryMethod: 'unac_pickup',
+    paymentPlan: 'advance_50'
+  });
+  assert.equal(unacHigh.expectedInitialPayment, 50);
+  assert.equal(unacHigh.minRetentionSuggested, 10);
+  assert.equal(unacHigh.suggestedRefundIfCancelled, 40);
+
+  // Shalom 50% on S/ 24 order -> enforced min advance S/ 30 capped at totalCharged (S/ 24)
+  const shalomSmall = computeSeparationPolicy({
+    totalCharged: 24,
+    deliveryMethod: 'shalom_agency',
+    paymentPlan: 'advance_50'
+  });
+  assert.equal(shalomSmall.expectedInitialPayment, 24);
+  assert.equal(shalomSmall.balanceAfterAdvance, 0);
+
+  // Shalom 50% on S/ 40 order -> enforced min advance S/ 30, balance S/ 10
+  const shalomMid = computeSeparationPolicy({
+    totalCharged: 40,
+    deliveryMethod: 'shalom_agency',
+    paymentPlan: 'advance_50'
+  });
+  assert.equal(shalomMid.expectedInitialPayment, 30);
+  assert.equal(shalomMid.balanceAfterAdvance, 10);
+});
+
+test('Phase 5: formatSaleWhatsAppTicket hides Shalom 4-digit security key when balanceDue > 0 and reveals it when paid', () => {
+  const shalomSalePending = {
+    code: 'VTA-090',
+    status: 'pending_delivery',
+    deliveryMethod: 'shalom_agency',
+    destinationRegion: 'Arequipa - Av. Parra',
+    carrierTrackingCode: 'SHL-778899',
+    carrierSecurityCode: '4821',
+    totalCharged: 80,
+    amountPaid: 40,
+    balanceDue: 40,
+    items: [{ productNameSnapshot: 'Tinta Berry', shadeNameSnapshot: '02 Cereza', quantity: 2 }]
+  };
+
+  const pendingTicket = formatSaleWhatsAppTicket(shalomSalePending, { name: 'Camila', dni: '71234567' });
+  assert.match(pendingTicket, /Shalom/);
+  assert.match(pendingTicket, /SHL-778899/);
+  assert.doesNotMatch(pendingTicket, /4821/, 'NEVER reveal 4-digit Shalom key while balanceDue > 0');
+  assert.match(pendingTicket, /Se enviará al completar el saldo/i);
+
+  const paidTicket = formatSaleWhatsAppTicket(
+    { ...shalomSalePending, amountPaid: 80, balanceDue: 0 },
+    { name: 'Camila', dni: '71234567' }
+  );
+  assert.match(paidTicket, /4821/, 'Reveal 4-digit Shalom key once fully paid');
+});
+
+test('Phase 5: applyCancelSaleWithPartialRefund restores stock/slots, reconciles partial refund in Yape cash & net profit, and carrier dispatch works locally & via RPC', async () => {
+  let db = emptyState();
+  db = applyCreateProductWithInitialStock(db, {
+    name: 'Lip Gloss',
+    category: 'Labios',
+    unitPrice: 40,
+    unitCost: 15,
+    initialStock: 5
+  });
+  const variantId = db.variants[0].id;
+  db = applySaveDeliveryPoint(db, { id: 'pt-unac', code: 'PTO-1', name: 'UNAC Puerta Principal', zoneType: 'unac' });
+  db = applySaveDeliverySlot(db, { id: 'sl-1', deliveryPointId: 'pt-unac', dayLabel: 'Mañana', timeRange: '2-4 PM', maxOrders: 10, bookedOrders: 1 });
+
+  db = applyCreateSale(db, {
+    newCustomer: { name: 'Sofía', whatsapp: '911222333', dni: '76543210' },
+    status: 'pending_delivery',
+    deliverySlotId: 'sl-1',
+    deliveryMethod: 'shalom_agency',
+    destinationRegion: 'Trujillo - América',
+    initialPaymentAmount: 20,
+    initialPaymentMethod: 'yape',
+    initialPaymentConcept: 'order_advance',
+    items: [{ variantId, quantity: 1, appliedUnitPrice: 40 }]
+  });
+  const saleId = db.sales[0].id;
+  assert.equal(db.variants[0].stock, 4);
+
+  // Carrier dispatch update (tracking + 4-digit key)
+  db = applyUpdateSaleCarrierDispatch(db, {
+    saleId,
+    carrierTrackingCode: 'SHL-102030',
+    carrierSecurityCode: '9912',
+    fulfillmentStage: 'dispatched'
+  });
+  assert.equal(db.sales[0].carrierTrackingCode, 'SHL-102030');
+  assert.equal(db.sales[0].carrierSecurityCode, '9912');
+  assert.equal(db.sales[0].fulfillmentStage, 'dispatched');
+
+  // Cancel with partial refund: received S/ 20, retain S/ 5, refund S/ 15 via Yape
+  db = applyCancelSaleWithPartialRefund(db, {
+    saleId,
+    refundAmount: 15,
+    refundMethod: 'yape',
+    retainedFee: 5,
+    reasonNote: 'No recogió en turno'
+  });
+
+  const cancelled = db.sales[0];
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.refundedAmount, 15);
+  assert.equal(cancelled.forfeitedFeeAmount, 5);
+  assert.equal(cancelled.balanceDue, 0);
+  assert.equal(db.variants[0].stock, 5, 'Stock restored');
+  assert.equal(db.deliverySlots[0].bookedOrders, 0, 'Delivery slot released');
+
+  const metrics = computeDashboardMetrics(db, { period: 'all' });
+  assert.equal(metrics.paymentsByMethod.yape, 5, 'Cash reconciliation reflects +20 advance - 15 refund = +5 retained');
+  assert.equal(metrics.totalRetainedFees, 5);
+  assert.equal(metrics.realizedNetProfit, 5, 'Retained compensation is reflected in net profit');
+
+  // Shipping method edit
+  db = applySaveShippingMethod(db, { id: 'olva_lima', baseFee: 12 });
+  assert.equal(db.shippingMethods.find((m) => m.id === 'olva_lima').baseFee, 12);
+
+  // Cloud RPC & Realtime availability subscription wiring
+  const rpcCalls = [];
+  const subscribedFilters = [];
+  setSupabaseClientForTests({
+    rpc: async (fn, args) => {
+      rpcCalls.push({ fn, args });
+      return { data: { ok: true }, error: null };
+    },
+    from: (tbl) => ({
+      select: () => ({
+        order: () => ({
+          order: async () => ({ data: [], error: null }),
+          limit: async () => ({ data: [], error: null }),
+          then: (cb) => cb({ data: [], error: null })
+        }),
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+        then: (cb) => cb({ data: [], error: null })
+      }),
+      upsert: async () => ({ error: null })
+    }),
+    auth: {
+      getSession: async () => ({ data: { session: { expires_at: Math.floor(Date.now() / 1000) + 3600 } } })
+    },
+    channel: (name) => ({
+      on: (_type, filter, _cb) => {
+        subscribedFilters.push({ name, filter });
+        return {
+          on: () => ({ subscribe: () => ({}) }),
+          subscribe: () => ({})
+        };
+      }
+    }),
+    removeChannel: () => {}
+  });
+
+  try {
+    await updateSaleCarrierDispatch(saleId, {
+      carrierTrackingCode: 'SHL-555',
+      carrierSecurityCode: '1234',
+      fulfillmentStage: 'dispatched'
+    });
+    await cancelSaleWithPartialRefund(saleId, {
+      refundAmount: 15,
+      refundMethod: 'yape',
+      retainedFee: 5,
+      reasonNote: 'Vencido'
+    });
+    assert.equal(rpcCalls[0].fn, 'update_sale_carrier_dispatch');
+    assert.equal(rpcCalls[1].fn, 'cancel_sale_with_partial_refund');
+    assert.equal(rpcCalls[1].args.refund_amount, 15);
+    assert.equal(rpcCalls[1].args.retained_fee, 5);
+
+    const unsub = subscribePublicVariantAvailability(() => {});
+    assert.equal(subscribedFilters[0].filter.table, 'public_variant_availability');
+    unsub();
+  } finally {
+    setSupabaseClientForTests(null);
+  }
 });
 
 

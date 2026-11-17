@@ -31,6 +31,75 @@ export const SALE_STATUSES = {
 };
 
 export const DEFAULT_COMBO_RATIO = 0.75;
+export const UNAC_RETENTION_RATE = 0.20;
+export const UNAC_MIN_RETENTION = 5.00;
+export const RESERVATION_HOLD_MINUTES = 15;
+
+export const FULFILLMENT_STAGES = {
+  pending_pack: { label: 'Por empacar', badgeClass: 'badge-warning' },
+  packed: { label: 'Empacado', badgeClass: 'badge-brand' },
+  dispatched: { label: 'En tránsito / Agencia', badgeClass: 'badge-brand' },
+  delivered: { label: 'Entregado', badgeClass: 'badge-success' }
+};
+
+export const DEFAULT_SHIPPING_METHODS = [
+  {
+    id: 'unac_pickup',
+    code: 'ENV-UNAC',
+    name: 'Entrega en UNAC / Puntos Glow',
+    carrier: 'unac',
+    shippingPaymentMode: 'free',
+    baseFee: 0,
+    minAdvanceAmount: 0,
+    requiresDni: false,
+    requiresAddress: false,
+    active: true,
+    sortOrder: 1,
+    description: 'Entrega coordinada sin costo de envío'
+  },
+  {
+    id: 'shalom_agency',
+    code: 'ENV-SHALOM',
+    name: 'Shalom · Agencia a Agencia (Flete pago en destino)',
+    carrier: 'shalom',
+    shippingPaymentMode: 'collect_on_delivery',
+    baseFee: 0,
+    minAdvanceAmount: 30,
+    requiresDni: true,
+    requiresAddress: false,
+    active: true,
+    sortOrder: 2,
+    description: 'Recoges en agencia Shalom con tu DNI y pagas el flete allá'
+  },
+  {
+    id: 'olva_lima',
+    code: 'ENV-OLVA-LIM',
+    name: 'Olva Courier · Lima Metropolitana y Callao',
+    carrier: 'olva',
+    shippingPaymentMode: 'prepaid_to_pipo',
+    baseFee: 10,
+    minAdvanceAmount: 30,
+    requiresDni: true,
+    requiresAddress: true,
+    active: true,
+    sortOrder: 3,
+    description: 'Envío a domicilio 24-48h hábiles'
+  },
+  {
+    id: 'olva_provincia',
+    code: 'ENV-OLVA-PROV',
+    name: 'Olva Courier · Provincias a Domicilio',
+    carrier: 'olva',
+    shippingPaymentMode: 'prepaid_to_pipo',
+    baseFee: 20,
+    minAdvanceAmount: 30,
+    requiresDni: true,
+    requiresAddress: true,
+    active: true,
+    sortOrder: 4,
+    description: 'Envío a domicilio 48-72h hábiles'
+  }
+];
 
 export const SHADE_COLOR_PRESETS = [
   { hex: '#F48FB1', label: 'Rosa Pastel' },
