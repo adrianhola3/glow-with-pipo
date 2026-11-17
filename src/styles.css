@@ -3838,7 +3838,7 @@ html:has(.pipo-storefront), body:has(.pipo-storefront) { overflow-x: clip; }
 .pipo-reservation-badges .badge { white-space: normal; overflow-wrap: anywhere; }
 .pipo-shipping-edit { display: grid; gap: 12px; min-width: 0; }
 .pipo-shipping-edit .card-title { margin: 0; overflow-wrap: anywhere; }
-.pipo-shipping-edit textarea, .pipo-shipping-fields :is(input, select) { box-sizing: border-box; width: 100%; min-width: 0; }
+.pipo-shipping-edit textarea, .pipo-shipping-fields :is(input:not([type="radio"]):not([type="checkbox"]), select) { box-sizing: border-box; width: 100%; min-width: 0; }
 .pipo-order-dialog {
   position: fixed; inset: 0; margin: auto; box-sizing: border-box; color: var(--pipo-espresso);
   width: min(540px, calc(100% - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
@@ -3848,7 +3848,7 @@ html:has(.pipo-storefront), body:has(.pipo-storefront) { overflow-x: clip; }
 .pipo-order-dialog .modal-footer { flex-wrap: wrap; }
 @media (max-width: 520px) {
   .pipo-shipping-grid, .pipo-shipping-fields { grid-template-columns: minmax(0, 1fr); }
-  .pipo-shipping-fields :is(input, select), .pipo-shipping-edit :is(input:not([type=checkbox]), select, textarea) { font-size: 1rem; }
+  .pipo-shipping-fields :is(input:not([type="radio"]):not([type="checkbox"]), select), .pipo-shipping-edit :is(input:not([type=checkbox]), select, textarea) { font-size: 1rem; }
 }
 .pipo-shade-pill:has(.pipo-shade-reservations) { flex-wrap: wrap; }
 .pipo-shade-reservations { flex: 1 0 100%; font-size: .7rem; white-space: normal; }
